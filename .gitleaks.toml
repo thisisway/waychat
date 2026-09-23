@@ -1,0 +1,10 @@
+# Regras padrão do gitleaks + exceções deliberadas e específicas.
+[extend]
+useDefault = true
+
+# Senhas fictícias em fixtures de teste disparam a regra genérica; só ela é dispensada, e só em arquivos de teste.
+# Qualquer outra regra (chaves AWS/GitHub/etc.) continua valendo inclusive nos testes.
+[[allowlists]]
+description = "Senhas fictícias usadas por testes automatizados"
+targetRules = ["generic-api-key"]
+paths = ['''\.test\.tsx?$''']
