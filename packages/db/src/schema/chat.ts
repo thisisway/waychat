@@ -261,3 +261,19 @@ export const cannedResponses = pgTable(
   },
   (t) => [unique('canned_responses_shortcut_uq').on(t.accountId, t.shortcut)],
 );
+
+/** Última leitura de cada atendente por conversa: base do contador de não lidas. */
+export const conversationReads = pgTable(
+  'conversation_reads',
+  {
+    accountId: accountRef(),
+    conversationId: uuid('conversation_id')
+      .notNull()
+      .references(() => conversations.id, { onDelete: 'cascade' }),
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    lastReadAt: tsz('last_read_at').notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.conversationId, t.userId] })],
+);

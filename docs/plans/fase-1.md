@@ -1,6 +1,6 @@
 # Plano — Fase 1 (Núcleo de atendimento)
 
-Status: **em execução** — passos 1 (banco) e 2 (contatos, inboxes, chaves de API) concluídos. (O responsável delegou as decisões em aberto: "faça como achar melhor"; elas estão registradas abaixo.)
+Status: **em execução** — passos 1 (banco), 2 (contatos, inboxes, chaves de API) e 3 (conversas e mensagens) concluídos. (O responsável delegou as decisões em aberto: "faça como achar melhor"; elas estão registradas abaixo.)
 
 ## Escopo (seção 16 do prompt)
 

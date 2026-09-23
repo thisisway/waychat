@@ -50,6 +50,20 @@
       "when": 1790199729805,
       "tag": "0006_chat_rls_triggers",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1790205203616,
+      "tag": "0007_conversation_reads",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1790205207030,
+      "tag": "0008_conversation_reads_rls",
+      "breakpoints": true
     }
   ]
 }

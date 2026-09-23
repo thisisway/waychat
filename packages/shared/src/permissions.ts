@@ -17,6 +17,12 @@ export const PERMISSIONS = [
   'inboxes:manage',
   'contacts:read',
   'contacts:manage',
+  'conversations:read',
+  'conversations:read_all',
+  'conversations:reply',
+  'conversations:manage',
+  'labels:manage',
+  'canned_responses:manage',
 ] as const;
 
 export type Permission = (typeof PERMISSIONS)[number];
@@ -41,8 +47,23 @@ export const SYSTEM_ROLES: Record<SystemRoleName, readonly Permission[]> = {
     'inboxes:read',
     'contacts:read',
     'contacts:manage',
+    'conversations:read',
+    'conversations:read_all',
+    'conversations:reply',
+    'conversations:manage',
+    'labels:manage',
+    'canned_responses:manage',
   ],
-  Agente: ['account:read', 'sessions:manage_own', 'contacts:read', 'contacts:manage'],
+  Agente: [
+    'account:read',
+    'sessions:manage_own',
+    'contacts:read',
+    'contacts:manage',
+    'conversations:read',
+    'conversations:reply',
+    'conversations:manage',
+    'canned_responses:manage',
+  ],
 };
 
 export const OWNER_ROLE: SystemRoleName = 'Owner';

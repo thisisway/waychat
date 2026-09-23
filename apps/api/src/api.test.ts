@@ -1,5 +1,5 @@
 import { randomBytes } from 'node:crypto';
-import { createCtx, type Ctx } from '@waychat/core';
+import { createCtx, receiveInboundMessage, type Ctx } from '@waychat/core';
 import { startTestDb, type TestDb } from '@waychat/db/testing';
 import { loadEnv } from '@waychat/shared';
 import type { FastifyInstance, LightMyRequestResponse } from 'fastify';
@@ -12,6 +12,7 @@ import type { Access } from './types.js';
 let t: TestDb;
 let app: FastifyInstance;
 let routeAccess: Map<string, Access>;
+let coreCtx: Ctx;
 const registry = new Registry();
 let clock = Date.UTC(2026, 0, 15, 12, 0, 0);
 const step = (s: number) => (clock += s * 1000);
@@ -90,7 +91,7 @@ beforeAll(async () => {
     MASTER_KEY: randomBytes(32).toString('base64'),
     SESSION_SECRET: 'y'.repeat(48),
   });
-  const ctx: Ctx = createCtx(
+  coreCtx = createCtx(
     t.app.db,
     {
       sessionSecret: env.SESSION_SECRET,
@@ -103,7 +104,7 @@ beforeAll(async () => {
     },
     () => new Date(clock),
   );
-  const built = await buildApp({ env, ctx, logger: false, metrics: registry });
+  const built = await buildApp({ env, ctx: coreCtx, logger: false, metrics: registry });
   app = built.app;
   routeAccess = built.routeAccess;
   await app.ready();
@@ -624,8 +625,8 @@ describe('inboxes, chaves de API e contatos pela API', () => {
     const { key, api_key } = created.json();
     expect(key).toMatch(/^wc_[0-9a-f]{8}_[A-Za-z0-9_-]{43}$/);
     const list = await call(owner, 'GET', '/api-keys');
-    expect(list.body).not.toContain(key.split('_')[2]);
-    expect(list.json().items[0].prefix).toBe(key.split('_').slice(0, 2).join('_'));
+    expect(list.body).not.toContain(key.slice(12)); // o segredo (após wc_ + 8 hex + _)
+    expect(list.json().items[0].prefix).toBe(key.slice(0, 11));
     expect((await call(agent, 'GET', '/api-keys')).statusCode).toBe(403);
     expect(
       (await call(agent, 'POST', '/api-keys', { name: 'Nao', scopes: ['messages:write'] }))
@@ -668,5 +669,172 @@ describe('inboxes, chaves de API e contatos pela API', () => {
     expect(Object.keys(spec.paths)).toEqual(
       expect.arrayContaining(['/inboxes', '/api-keys', '/contacts', '/inboxes/{id}/members']),
     );
+  });
+});
+
+describe('conversas pela API', () => {
+  async function team() {
+    const { s: owner } = await register();
+    const me = (await call(owner, 'GET', '/auth/me')).json();
+    const roles = (await call(owner, 'GET', '/roles')).json().items as {
+      id: string;
+      name: string;
+    }[];
+    const agentRole = roles.find((r) => r.name === 'Agente')?.id;
+    const mk = async (label: string) => {
+      const email = `${label}-${uniq()}@exemplo.com`;
+      const added = await call(owner, 'POST', '/members', {
+        email,
+        name: label,
+        password: PASSWORD,
+        role_id: agentRole,
+      });
+      const addr = ip();
+      const login = await call(
+        null,
+        'POST',
+        '/auth/login',
+        { email, password: PASSWORD },
+        { ip: addr },
+      );
+      return { s: sessionFrom(login, addr), id: added.json().user_id as string };
+    };
+    const a = await mk('agentea');
+    const b = await mk('agenteb');
+    const inbox1 = (
+      await call(owner, 'POST', '/inboxes', { name: 'Vendas', channel_type: 'widget' })
+    ).json().inbox.id as string;
+    const inbox2 = (
+      await call(owner, 'POST', '/inboxes', { name: 'Suporte', channel_type: 'widget' })
+    ).json().inbox.id as string;
+    await call(owner, 'PUT', `/inboxes/${inbox1}/members`, { user_ids: [a.id] });
+    await call(owner, 'PUT', `/inboxes/${inbox2}/members`, { user_ids: [b.id] });
+    return { owner, a, b, inbox1, inbox2, accountId: me.account.id as string };
+  }
+  const inbound = (accountId: string, inboxId: string, who: string, content: string) =>
+    receiveInboundMessage(coreCtx, {
+      accountId,
+      inboxId,
+      identity: { channel: 'widget', externalId: who, name: `Visitante ${who}` },
+      content,
+    });
+
+  it('agente lista só as suas conversas, responde com idempotência e marca como lida', async () => {
+    const { a, accountId, inbox1, inbox2 } = await team();
+    const c1 = await inbound(accountId, inbox1, 'v1', 'Olá, preciso de ajuda');
+    await inbound(accountId, inbox2, 'v2', 'conversa de outra inbox');
+
+    const list = await call(a.s, 'GET', '/conversations');
+    expect(list.statusCode, list.body).toBe(200);
+    expect(list.json().items.map((c: { id: string }) => c.id)).toEqual([c1.conversationId]);
+    expect(list.json().items[0]).toMatchObject({
+      unreadCount: 1,
+      lastMessage: 'Olá, preciso de ajuda',
+      status: 'open',
+    });
+    expect((await call(a.s, 'GET', '/conversations/counts')).json()).toEqual({
+      all: 1,
+      unassigned: 1,
+      mine: 0,
+      unread: 1,
+    });
+
+    const cid = crypto.randomUUID();
+    const url = `/conversations/${c1.conversationId}/messages`;
+    const first = await call(a.s, 'POST', url, { content: 'Já te atendo', client_message_id: cid });
+    expect(first.statusCode, first.body).toBe(201);
+    const again = await call(a.s, 'POST', url, { content: 'Já te atendo', client_message_id: cid });
+    expect(again.statusCode).toBe(200);
+    expect(again.json().duplicate).toBe(true);
+    expect(again.json().message.id).toBe(first.json().message.id);
+
+    await call(a.s, 'POST', url, {
+      content: 'nota',
+      client_message_id: crypto.randomUUID(),
+      private: true,
+    });
+    const msgs = (await call(a.s, 'GET', `${url}?limit=2`)).json();
+    expect(msgs.items).toHaveLength(2);
+    expect(msgs.nextCursor).toBeTruthy();
+    expect(msgs.items[0].private).toBe(true);
+    const older = (await call(a.s, 'GET', `${url}?before=${msgs.nextCursor as string}`)).json();
+    expect(older.items.map((m: { content: string }) => m.content)).toEqual([
+      'Olá, preciso de ajuda',
+    ]);
+
+    expect((await call(a.s, 'POST', `/conversations/${c1.conversationId}/read`)).statusCode).toBe(
+      200,
+    );
+    expect((await call(a.s, 'GET', '/conversations/counts')).json().unread).toBe(0);
+  });
+
+  it('conversa de outra inbox dá 404 em tudo (não revela que existe)', async () => {
+    const { a, accountId, inbox2 } = await team();
+    const id = (await inbound(accountId, inbox2, 'v2', 'da inbox 2')).conversationId;
+    expect((await call(a.s, 'GET', `/conversations/${id}`)).statusCode).toBe(404);
+    expect((await call(a.s, 'GET', `/conversations/${id}/messages`)).statusCode).toBe(404);
+    const send = await call(a.s, 'POST', `/conversations/${id}/messages`, {
+      content: 'x',
+      client_message_id: crypto.randomUUID(),
+    });
+    expect(send.statusCode).toBe(404);
+    expect(
+      (await call(a.s, 'PATCH', `/conversations/${id}`, { status: 'resolved' })).statusCode,
+    ).toBe(404);
+    expect((await call(a.s, 'POST', `/conversations/${id}/read`)).statusCode).toBe(404);
+    const ghost = await call(a.s, 'GET', `/conversations/${crypto.randomUUID()}`);
+    expect(ghost.statusCode).toBe(404);
+    expect(ghost.json().error.code).toBe('not_found'); // igual a uma conversa inexistente
+  });
+
+  it('atualiza status/atribuição, aplica labels e valida entrada', async () => {
+    const { owner, a, accountId, inbox1 } = await team();
+    const c = await inbound(accountId, inbox1, 'v1', 'oi');
+    const base = `/conversations/${c.conversationId}`;
+    const upd = await call(a.s, 'PATCH', base, {
+      status: 'pending',
+      priority: 'high',
+      assignee_id: a.id,
+    });
+    expect(upd.json()).toMatchObject({ status: 'pending', priority: 'high', assigneeId: a.id });
+    expect((await call(a.s, 'PATCH', base, { status: 'snoozed' })).statusCode).toBe(422);
+    expect((await call(a.s, 'PATCH', base, { status: 'inventado' })).statusCode).toBe(400);
+
+    expect((await call(a.s, 'POST', '/labels', { name: 'vip' })).statusCode).toBe(403); // agente não cria label
+    const label = (await call(owner, 'POST', '/labels', { name: 'vip', color: '#ff0000' })).json();
+    const labelId = label.id as string;
+    expect((await call(a.s, 'POST', `${base}/labels/${labelId}`)).statusCode).toBe(200);
+    expect((await call(a.s, 'GET', base)).json().labels).toHaveLength(1);
+    expect(
+      (await call(a.s, 'GET', `/conversations?label_id=${labelId}`)).json().items,
+    ).toHaveLength(1);
+    expect(
+      (await call(a.s, 'GET', '/conversations?assignee=me&status=pending')).json().items,
+    ).toHaveLength(1);
+    expect((await call(a.s, 'GET', '/conversations?unread=true')).json().items).toHaveLength(1);
+    const empty = await call(a.s, 'POST', `${base}/messages`, {
+      content: '',
+      client_message_id: crypto.randomUUID(),
+    });
+    expect(empty.statusCode).toBe(422);
+    expect((await call(a.s, 'POST', `${base}/messages`, { content: 'ok' })).statusCode).toBe(400); // sem client_message_id
+  });
+
+  it('respostas prontas: agente cria e busca por atalho', async () => {
+    const { a } = await team();
+    const created = await call(a.s, 'POST', '/canned-responses', {
+      shortcut: 'Ola',
+      content: 'Olá! Como posso ajudar?',
+    });
+    expect(created.statusCode, created.body).toBe(201);
+    expect(created.json().shortcut).toBe('ola');
+    expect(
+      (await call(a.s, 'POST', '/canned-responses', { shortcut: 'ola', content: 'outra' }))
+        .statusCode,
+    ).toBe(409);
+    expect((await call(a.s, 'GET', '/canned-responses?search=ol')).json().items).toHaveLength(1);
+    expect(
+      (await call(a.s, 'DELETE', `/canned-responses/${created.json().id as string}`)).statusCode,
+    ).toBe(200);
   });
 });

@@ -97,3 +97,39 @@ export {
   normalizePhone,
   type ContactView,
 } from './modules/contacts/application/contacts.js';
+
+export {
+  receiveInboundMessage,
+  sendMessage,
+  listMessages,
+  MAX_CONTENT_LENGTH,
+  type MessageView,
+  type InboundMessageInput,
+  type InboundResult,
+} from './modules/conversations/application/messages.js';
+export {
+  listConversations,
+  getConversation,
+  updateConversation,
+  markConversationRead,
+  conversationCounts,
+  STATUSES,
+  PRIORITIES,
+  type ConversationSummary,
+  type ConversationDetail,
+  type ConversationStatus,
+  type ListConversationsOptions,
+} from './modules/conversations/application/conversations.js';
+export {
+  listLabels,
+  createLabel,
+  deleteLabel,
+  addLabel,
+  removeLabel,
+  listCannedResponses,
+  createCannedResponse,
+  updateCannedResponse,
+  deleteCannedResponse,
+  type LabelView,
+  type CannedResponseView,
+} from './modules/conversations/application/labels.js';

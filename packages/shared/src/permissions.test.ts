@@ -17,7 +17,7 @@ describe('catálogo de permissões', () => {
     expect([...SYSTEM_ROLES.Owner].sort()).toEqual([...PERMISSIONS].sort());
     // o agente edita contatos, mas não administra conta, membros, papéis, chaves nem inboxes
     const manage = SYSTEM_ROLES.Agente.filter((p) => p.endsWith(':manage')).sort();
-    expect(manage).toEqual(['contacts:manage']);
+    expect(manage).toEqual(['canned_responses:manage', 'contacts:manage', 'conversations:manage']);
     expect(SYSTEM_ROLES.Agente).not.toContain('members:manage');
   });
 });

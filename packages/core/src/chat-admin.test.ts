@@ -35,6 +35,8 @@ let clock = Date.UTC(2026, 0, 15, 12, 0, 0);
 let ctx: Ctx;
 const step = (s: number) => (clock += s * 1000);
 const PASSWORD = 'uma-senha-bem-longa-42';
+/** O segredo é base64url e pode conter `_`: não dá para separar a chave por `_`. Formato fixo: wc_ + 8 hex + _ + segredo. */
+const secretOf = (key: string) => key.slice(12);
 let n = 0;
 const uniq = () => `${String(++n)}-${randomBytes(3).toString('hex')}`;
 
@@ -236,7 +238,7 @@ describe('chaves de API', () => {
       scopes: ['messages:write'],
     });
     expect(key).toMatch(/^wc_[0-9a-f]{8}_[A-Za-z0-9_-]{43}$/);
-    const secret = key.split('_')[2] ?? '';
+    const secret = secretOf(key);
     const row = await t.owner.pool.query(
       'select key_prefix, key_hash from api_keys where id = $1',
       [apiKey.id],
@@ -258,7 +260,8 @@ describe('chaves de API', () => {
       scopes: ['messages:write'],
       expiresAt: new Date(clock + 3_600_000),
     });
-    const [, prefix, secret] = key.split('_') as [string, string, string];
+    const prefix = key.slice(3, 11);
+    const secret = secretOf(key);
     await expectCode(verifyApiKey(ctx, 'lixo'), 'api_key_invalid');
     await expectCode(verifyApiKey(ctx, `wc_${'0'.repeat(8)}_${secret}`), 'api_key_invalid');
     await expectCode(verifyApiKey(ctx, `wc_${prefix}_${'A'.repeat(43)}`), 'api_key_invalid');
@@ -280,7 +283,7 @@ describe('chaves de API', () => {
     expect((await verifyApiKey(ctx, ka.key)).accountId).toBe(a.accountId);
     expect((await verifyApiKey(ctx, kb.key)).accountId).toBe(b.accountId);
     // prefixo de uma com segredo da outra não passa
-    const mixed = `wc_${ka.key.split('_')[1] ?? ''}_${kb.key.split('_')[2] ?? ''}`;
+    const mixed = `wc_${ka.key.slice(3, 11)}_${secretOf(kb.key)}`;
     await expectCode(verifyApiKey(ctx, mixed), 'api_key_invalid');
     await expectCode(revokeApiKey(ctx, b.owner, ka.apiKey.id), 'not_found');
   });

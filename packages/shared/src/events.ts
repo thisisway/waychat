@@ -30,6 +30,21 @@ export const eventPayloadSchemas = {
   'contact.created': z.object({ contact_id: z.uuid() }),
   'contact.updated': z.object({ contact_id: z.uuid() }),
   'contact.deleted': z.object({ contact_id: z.uuid() }),
+  // `inbox_id` permite ao gateway filtrar por visibilidade sem consultar o banco; `private` marca nota interna
+  // (nunca vai para o cliente final). Sem conteúdo de mensagem nem dados pessoais.
+  'conversation.created': z.object({ conversation_id: z.uuid(), inbox_id: z.uuid() }),
+  'conversation.updated': z.object({
+    conversation_id: z.uuid(),
+    inbox_id: z.uuid(),
+    fields: z.array(z.string()),
+  }),
+  'message.created': z.object({
+    message_id: z.uuid(),
+    conversation_id: z.uuid(),
+    inbox_id: z.uuid(),
+    private: z.boolean(),
+    direction: z.enum(['in', 'out']),
+  }),
 } as const;
 
 export type EventType = keyof typeof eventPayloadSchemas;
