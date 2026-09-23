@@ -4,7 +4,7 @@
 #
 # Estágio 1 compila o monorepo; estágio 2 copia só o necessário (dependências de produção + dist)
 # para uma imagem distroless: sem shell, sem gerenciador de pacotes, rodando como usuário não-root.
-FROM node:24-slim AS build
+FROM node:25-slim AS build
 ARG APP
 RUN test -n "$APP" || (echo "defina --build-arg APP=api|worker" && exit 1)
 RUN npm install -g pnpm@11.8.0
