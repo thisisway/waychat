@@ -14,7 +14,7 @@ RUN pnpm install --frozen-lockfile
 RUN pnpm --filter "@waychat/${APP}..." build
 RUN pnpm --filter "@waychat/${APP}" deploy --legacy --prod /out
 
-FROM gcr.io/distroless/nodejs24-debian12:nonroot AS runtime
+FROM gcr.io/distroless/nodejs24-debian13:nonroot AS runtime
 ENV NODE_ENV=production
 WORKDIR /app
 COPY --from=build /out /app
