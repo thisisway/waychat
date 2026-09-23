@@ -44,7 +44,7 @@ function sessionFrom(res: LightMyRequestResponse, ipAddr: string): Session {
 
 async function call(
   s: Session | null,
-  method: 'GET' | 'POST' | 'PATCH' | 'DELETE',
+  method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE',
   url: string,
   body?: unknown,
   extra: { csrf?: boolean; headers?: Record<string, string>; ip?: string } = {},
@@ -153,7 +153,7 @@ describe('autorização deny-by-default', () => {
   it('sem cookie de sessão toda rota protegida responde 401', async () => {
     for (const [key, a] of routeAccess) {
       if (a.kind === 'public') continue;
-      const [method, url] = key.split(' ') as ['GET' | 'POST' | 'PATCH' | 'DELETE', string];
+      const [method, url] = key.split(' ') as ['GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE', string];
       const res = await call(
         null,
         method,
@@ -531,5 +531,142 @@ describe('métricas', () => {
     expect(text).toMatch(/route="\/members\/:id"/);
     expect(text).not.toContain(me.user.id); // nenhum id de cliente vaza para as métricas
     expect(text).not.toMatch(/wc_at|wc_rt/);
+  });
+});
+
+describe('inboxes, chaves de API e contatos pela API', () => {
+  async function ownerAndAgent() {
+    const { s: owner } = await register();
+    const roles = (await call(owner, 'GET', '/roles')).json().items as {
+      id: string;
+      name: string;
+    }[];
+    const agentRole = roles.find((r) => r.name === 'Agente');
+    const email = `ag-${uniq()}@exemplo.com`;
+    await call(owner, 'POST', '/members', {
+      email,
+      name: 'Ana',
+      password: PASSWORD,
+      role_id: agentRole?.id,
+    });
+    const addr = ip();
+    const login = await call(
+      null,
+      'POST',
+      '/auth/login',
+      { email, password: PASSWORD },
+      { ip: addr },
+    );
+    return { owner, agent: sessionFrom(login, addr) };
+  }
+
+  it('inbox widget: o segredo aparece só na criação; agente lista só as suas e não cria', async () => {
+    const { owner, agent } = await ownerAndAgent();
+    const created = await call(owner, 'POST', '/inboxes', {
+      name: 'Site',
+      channel_type: 'widget',
+      welcome_message: 'Oi!',
+      allowed_origins: ['https://loja.exemplo.com'],
+    });
+    expect(created.statusCode, created.body).toBe(201);
+    const { inbox, identity_secret } = created.json();
+    expect(identity_secret).toMatch(/^[A-Za-z0-9_-]{43}$/);
+    expect(inbox.publicKey).toMatch(/^ibx_/);
+
+    const listed = await call(owner, 'GET', '/inboxes');
+    expect(listed.body).not.toContain(identity_secret);
+    expect(listed.json().items).toHaveLength(1);
+
+    expect((await call(agent, 'GET', '/inboxes')).json().items).toHaveLength(0);
+    expect(
+      (await call(agent, 'POST', '/inboxes', { name: 'Nao', channel_type: 'api' })).statusCode,
+    ).toBe(403);
+    const me = (await call(owner, 'GET', '/members')).json().items as {
+      userId: string;
+      roleName: string;
+    }[];
+    const agentId = me.find((m) => m.roleName === 'Agente')?.userId;
+    expect(
+      (await call(owner, 'PUT', `/inboxes/${inbox.id as string}/members`, { user_ids: [agentId] }))
+        .statusCode,
+    ).toBe(200);
+    expect((await call(agent, 'GET', '/inboxes')).json().items).toHaveLength(1);
+  });
+
+  it('inbox: edição, rotação de segredo, exclusão e erros com código estável', async () => {
+    const { owner } = await ownerAndAgent();
+    const { inbox } = (
+      await call(owner, 'POST', '/inboxes', { name: 'Site', channel_type: 'widget' })
+    ).json();
+    const upd = await call(owner, 'PATCH', `/inboxes/${inbox.id as string}`, {
+      primary_color: '#112233',
+      enabled: false,
+    });
+    expect(upd.json()).toMatchObject({ primaryColor: '#112233', enabled: false });
+    const rot = await call(owner, 'POST', `/inboxes/${inbox.id as string}/identity-secret/rotate`);
+    expect(rot.json().identity_secret).toMatch(/^[A-Za-z0-9_-]{43}$/);
+    const dup = await call(owner, 'POST', '/inboxes', { name: 'Site', channel_type: 'api' });
+    expect(dup.statusCode).toBe(409);
+    expect(dup.json().error.code).toBe('name_taken');
+    const bad = await call(owner, 'POST', '/inboxes', { name: 'Ok', channel_type: 'telegram' });
+    expect(bad.statusCode).toBe(400);
+    expect((await call(owner, 'DELETE', `/inboxes/${inbox.id as string}`)).statusCode).toBe(200);
+    expect((await call(owner, 'DELETE', `/inboxes/${inbox.id as string}`)).statusCode).toBe(404);
+  });
+
+  it('chaves de API: texto completo só na criação; agente sem acesso; revogação', async () => {
+    const { owner, agent } = await ownerAndAgent();
+    const created = await call(owner, 'POST', '/api-keys', {
+      name: 'CRM',
+      scopes: ['messages:write'],
+    });
+    expect(created.statusCode, created.body).toBe(201);
+    const { key, api_key } = created.json();
+    expect(key).toMatch(/^wc_[0-9a-f]{8}_[A-Za-z0-9_-]{43}$/);
+    const list = await call(owner, 'GET', '/api-keys');
+    expect(list.body).not.toContain(key.split('_')[2]);
+    expect(list.json().items[0].prefix).toBe(key.split('_').slice(0, 2).join('_'));
+    expect((await call(agent, 'GET', '/api-keys')).statusCode).toBe(403);
+    expect(
+      (await call(agent, 'POST', '/api-keys', { name: 'Nao', scopes: ['messages:write'] }))
+        .statusCode,
+    ).toBe(403);
+    expect(
+      (await call(owner, 'POST', '/api-keys', { name: 'Ruim', scopes: ['tudo'] })).statusCode,
+    ).toBe(400);
+    expect((await call(owner, 'DELETE', `/api-keys/${api_key.id as string}`)).statusCode).toBe(200);
+    expect((await call(owner, 'GET', '/api-keys')).json().items[0].revokedAt).toBeTruthy();
+  });
+
+  it('contatos: agente cria e busca; validação de domínio dá 422; isolamento entre contas', async () => {
+    const { owner, agent } = await ownerAndAgent();
+    const created = await call(agent, 'POST', '/contacts', {
+      name: 'Maria Souza',
+      email: 'MARIA@exemplo.com',
+      phone: '(11) 90000-0000',
+    });
+    expect(created.statusCode, created.body).toBe(201);
+    expect(created.json()).toMatchObject({ email: 'maria@exemplo.com', phone: '11900000000' });
+    const found = await call(owner, 'GET', '/contacts?search=souza');
+    expect(found.json().items).toHaveLength(1);
+    const bad = await call(agent, 'POST', '/contacts', { name: 'X', phone: '123' });
+    expect(bad.statusCode).toBe(422);
+    expect(bad.json().error.code).toBe('invalid_input');
+
+    const other = await register('Outra conta');
+    expect(
+      (await call(other.s, 'GET', `/contacts/${created.json().id as string}`)).statusCode,
+    ).toBe(404);
+    expect((await call(other.s, 'GET', '/contacts')).json().items).toHaveLength(0);
+    expect(
+      (await call(agent, 'DELETE', `/contacts/${created.json().id as string}`)).statusCode,
+    ).toBe(200);
+  });
+
+  it('o OpenAPI lista as rotas novas', async () => {
+    const spec = (await call(null, 'GET', '/openapi.json')).json();
+    expect(Object.keys(spec.paths)).toEqual(
+      expect.arrayContaining(['/inboxes', '/api-keys', '/contacts', '/inboxes/{id}/members']),
+    );
   });
 });

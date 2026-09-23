@@ -13,6 +13,10 @@ export const PERMISSIONS = [
   'api_keys:manage',
   'audit:read',
   'sessions:manage_own',
+  'inboxes:read',
+  'inboxes:manage',
+  'contacts:read',
+  'contacts:manage',
 ] as const;
 
 export type Permission = (typeof PERMISSIONS)[number];
@@ -28,8 +32,17 @@ export const SYSTEM_ROLES: Record<SystemRoleName, readonly Permission[]> = {
   Owner: PERMISSIONS,
   // Owner e Admin têm as mesmas permissões hoje; a diferença é regra de negócio (a conta nunca fica sem Owner).
   Admin: PERMISSIONS,
-  Supervisor: ['account:read', 'members:read', 'roles:read', 'audit:read', 'sessions:manage_own'],
-  Agente: ['account:read', 'sessions:manage_own'],
+  Supervisor: [
+    'account:read',
+    'members:read',
+    'roles:read',
+    'audit:read',
+    'sessions:manage_own',
+    'inboxes:read',
+    'contacts:read',
+    'contacts:manage',
+  ],
+  Agente: ['account:read', 'sessions:manage_own', 'contacts:read', 'contacts:manage'],
 };
 
 export const OWNER_ROLE: SystemRoleName = 'Owner';

@@ -17,6 +17,8 @@ import { registerHttpMetrics } from './metrics.js';
 import { registerAccessControl } from './plugins/access.js';
 import { registerErrorHandling } from './plugins/errors.js';
 import { adminRoutes } from './routes/admin.js';
+import { contactRoutes } from './routes/contacts.js';
+import { inboxRoutes } from './routes/inboxes.js';
 import { authRoutes } from './routes/auth.js';
 import { healthRoutes } from './routes/health.js';
 import { access, type Access } from './types.js';
@@ -97,6 +99,8 @@ export async function buildApp(deps: AppDeps): Promise<BuiltApp> {
   healthRoutes(app, { db: ctx.db, redis: deps.redis ?? null });
   authRoutes(app, env, ctx);
   adminRoutes(app, ctx);
+  inboxRoutes(app, ctx);
+  contactRoutes(app, ctx);
   app.get('/openapi.json', { config: access.public }, () => app.swagger());
 
   // requestId também no header de resposta para correlação com os logs

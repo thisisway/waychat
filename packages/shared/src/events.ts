@@ -23,6 +23,13 @@ export const eventPayloadSchemas = {
   'member.added': z.object({ user_id: z.uuid(), role_id: z.uuid() }),
   'member.role_changed': z.object({ user_id: z.uuid(), role_id: z.uuid() }),
   'member.removed': z.object({ user_id: z.uuid() }),
+  // Só ids: quem precisa dos dados busca pela API, já com a checagem de permissão (nada de PII no evento).
+  'inbox.created': z.object({ inbox_id: z.uuid() }),
+  'inbox.updated': z.object({ inbox_id: z.uuid() }),
+  'inbox.deleted': z.object({ inbox_id: z.uuid() }),
+  'contact.created': z.object({ contact_id: z.uuid() }),
+  'contact.updated': z.object({ contact_id: z.uuid() }),
+  'contact.deleted': z.object({ contact_id: z.uuid() }),
 } as const;
 
 export type EventType = keyof typeof eventPayloadSchemas;

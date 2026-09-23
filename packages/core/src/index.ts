@@ -62,3 +62,38 @@ export {
   updateAccount,
   type MeView,
 } from './modules/account/application/account.js';
+
+export {
+  createInbox,
+  listInboxes,
+  visibleInboxIds,
+  updateInbox,
+  rotateIdentitySecret,
+  deleteInbox,
+  listInboxMembers,
+  setInboxMembers,
+  CHANNEL_TYPES,
+  type InboxView,
+  type InboxMemberView,
+  type ChannelType,
+} from './modules/inbox/application/inboxes.js';
+export {
+  createApiKey,
+  listApiKeys,
+  revokeApiKey,
+  verifyApiKey,
+  API_SCOPES,
+  type ApiKeyView,
+  type ApiKeyPrincipal,
+  type ApiScope,
+} from './modules/inbox/application/api-keys.js';
+export {
+  createContact,
+  getContact,
+  updateContact,
+  deleteContact,
+  listContacts,
+  findOrCreateContactByIdentity,
+  normalizePhone,
+  type ContactView,
+} from './modules/contacts/application/contacts.js';
