@@ -1,0 +1,80 @@
+/*
+ * Ponte entre os tokens e o Tailwind v4 (CSS-first): no Tailwind v4 o "preset" é este @theme.
+ * Uso no app:  @import 'tailwindcss'; @import '@waychat/ui/fonts.css'; @import '@waychat/ui/tokens.css'; @import '@waychat/ui/theme.css';
+ * `inline` faz as classes (bg-surface, text-primary...) apontarem para var(--token), então o tema troca sem recompilar.
+ */
+@theme inline {
+  --color-*: initial; /* nenhuma cor padrão do Tailwind: só os tokens abaixo */
+
+  --color-app: var(--bg-app);
+  --color-shell: var(--bg-shell);
+  --color-surface: var(--surface);
+  --color-surface-muted: var(--surface-muted);
+  --color-surface-input: var(--surface-input);
+  --color-surface-info: var(--surface-info);
+  --color-chat: var(--chat-bg);
+  --color-bubble-in: var(--bubble-in);
+  --color-bubble-out: var(--bubble-out);
+
+  --color-primary: var(--primary);
+  --color-primary-hover: var(--primary-hover);
+  --color-primary-soft: var(--primary-soft);
+  --color-primary-text: var(--primary-text);
+  --color-on-primary: var(--on-primary);
+
+  --color-fg: var(--text);
+  --color-fg-secondary: var(--text-secondary);
+  --color-fg-muted: var(--text-muted);
+
+  --color-success: var(--success);
+  --color-offline: var(--offline);
+  --color-unread: var(--unread);
+  --color-on-unread: var(--on-unread);
+  --color-danger: var(--danger);
+  --color-danger-text: var(--danger-text);
+  --color-warning-bg: var(--warning-bg);
+  --color-warning-text: var(--warning-text);
+  --color-warning-dot: var(--warning-dot);
+  --color-note: var(--note-bg);
+  --color-note-meta: var(--note-meta);
+  --color-tooltip: var(--tooltip-bg);
+  --color-on-tooltip: var(--on-tooltip);
+  --color-avatar: var(--avatar-fallback);
+  --color-on-avatar: var(--on-avatar);
+  --color-hairline: var(--hairline);
+  --color-transparent: transparent;
+  --color-current: currentColor;
+
+  --radius-shell: var(--radius-shell);
+  --radius-panel: var(--radius-panel);
+  --radius-card: var(--radius-card);
+  --radius-control: var(--radius-control);
+
+  --shadow-soft: var(--shadow-soft);
+  --shadow-active: var(--shadow-active);
+
+  --font-sans: var(--font-sans);
+
+  --text-title: 20px;
+  --text-title--line-height: 28px;
+  --text-body: 15px;
+  --text-body--line-height: 22px;
+  --text-meta: 13px;
+  --text-meta--line-height: 18px;
+  --text-caption: 12px;
+  --text-caption--line-height: 16px;
+
+  --ease-out: var(--ease-out);
+}
+
+@layer base {
+  html {
+    font-family: var(--font-sans);
+    background: var(--bg-app);
+    color: var(--text);
+  }
+  :focus-visible {
+    outline: 2px solid var(--focus-ring);
+    outline-offset: 2px;
+  }
+}

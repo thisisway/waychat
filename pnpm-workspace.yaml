@@ -1,0 +1,11 @@
+packages:
+  - apps/*
+  - packages/*
+
+# Scripts de build de dependências: só o necessário (esbuild). Nativos opcionais do dockerode/protobufjs ficam bloqueados.
+allowBuilds:
+  esbuild: true
+  cpu-features: false
+  ssh2: false
+  protobufjs: false
+  msgpackr-extract: false

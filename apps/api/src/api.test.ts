@@ -1,0 +1,535 @@
+import { randomBytes } from 'node:crypto';
+import { createCtx, type Ctx } from '@waychat/core';
+import { startTestDb, type TestDb } from '@waychat/db/testing';
+import { loadEnv } from '@waychat/shared';
+import type { FastifyInstance, LightMyRequestResponse } from 'fastify';
+import { generateSync } from 'otplib';
+import { Registry } from 'prom-client';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { buildApp } from './app.js';
+import type { Access } from './types.js';
+
+let t: TestDb;
+let app: FastifyInstance;
+let routeAccess: Map<string, Access>;
+const registry = new Registry();
+let clock = Date.UTC(2026, 0, 15, 12, 0, 0);
+const step = (s: number) => (clock += s * 1000);
+
+const ORIGIN = 'http://localhost:3000';
+const PASSWORD = 'uma-senha-bem-longa-42';
+let n = 0;
+const uniq = () => `${String(++n)}-${randomBytes(3).toString('hex')}`;
+/** Cada teste usa um IP próprio para não dividir a cota de rate limit com os demais. */
+const ip = () => `10.1.${String(Math.floor(n / 250))}.${String((n % 250) + 1)}`;
+
+interface Session {
+  cookie: string;
+  csrf: string;
+  ip: string;
+}
+
+function jar(res: LightMyRequestResponse): Record<string, string> {
+  return Object.fromEntries(res.cookies.map((c) => [c.name, c.value]));
+}
+
+function sessionFrom(res: LightMyRequestResponse, ipAddr: string): Session {
+  const c = jar(res);
+  return {
+    cookie: `wc_at=${c['wc_at'] ?? ''}; wc_rt=${c['wc_rt'] ?? ''}; wc_csrf=${c['wc_csrf'] ?? ''}`,
+    csrf: c['wc_csrf'] ?? '',
+    ip: ipAddr,
+  };
+}
+
+async function call(
+  s: Session | null,
+  method: 'GET' | 'POST' | 'PATCH' | 'DELETE',
+  url: string,
+  body?: unknown,
+  extra: { csrf?: boolean; headers?: Record<string, string>; ip?: string } = {},
+) {
+  return app.inject({
+    method,
+    url,
+    remoteAddress: extra.ip ?? s?.ip ?? ip(),
+    headers: {
+      ...(s ? { cookie: s.cookie } : {}),
+      ...(s && extra.csrf !== false && method !== 'GET' ? { 'x-csrf-token': s.csrf } : {}),
+      ...extra.headers,
+    },
+    ...(body !== undefined ? { payload: body as object } : {}),
+  });
+}
+
+async function register(name = 'Acme') {
+  const email = `dono-${uniq()}@exemplo.com`;
+  const addr = ip();
+  const res = await call(
+    null,
+    'POST',
+    '/auth/register',
+    { account_name: name, name: 'Dono', email, password: PASSWORD },
+    { ip: addr },
+  );
+  expect(res.statusCode, res.body).toBe(201);
+  return { email, res, s: sessionFrom(res, addr) };
+}
+
+beforeAll(async () => {
+  t = await startTestDb();
+  const env = loadEnv({
+    PUBLIC_URL: ORIGIN,
+    DATABASE_URL: 'postgres://x:x@127.0.0.1:1/x',
+    VALKEY_URL: 'redis://127.0.0.1:1',
+    S3_ENDPOINT: 'http://127.0.0.1:1',
+    S3_REGION: 'x',
+    S3_BUCKET: 'x',
+    S3_ACCESS_KEY: 'x',
+    S3_SECRET_KEY: 'x',
+    MASTER_KEY: randomBytes(32).toString('base64'),
+    SESSION_SECRET: 'y'.repeat(48),
+  });
+  const ctx: Ctx = createCtx(
+    t.app.db,
+    {
+      sessionSecret: env.SESSION_SECRET,
+      masterKey: env.MASTER_KEY,
+      masterKeyPrevious: [],
+      accessTtlSeconds: 600,
+      refreshTtlSeconds: 30 * 86400,
+      challengeTtlSeconds: 300,
+      issuer: 'WayChat',
+    },
+    () => new Date(clock),
+  );
+  const built = await buildApp({ env, ctx, logger: false, metrics: registry });
+  app = built.app;
+  routeAccess = built.routeAccess;
+  await app.ready();
+});
+
+afterAll(async () => {
+  await app.close();
+  await t.stop();
+});
+
+describe('autorização deny-by-default', () => {
+  it('toda rota registrada declara o tipo de acesso; rotas públicas são exatamente estas', () => {
+    expect(routeAccess.size).toBeGreaterThan(20);
+    const publicRoutes = [...routeAccess.entries()]
+      .filter(([k, a]) => a.kind === 'public' && !k.startsWith('HEAD ')) // HEAD espelha o GET
+      .map(([k]) => k)
+      .sort();
+    // Se este teste falhar porque você criou uma rota pública, revise se ela DEVE ser pública e atualize a lista.
+    expect(publicRoutes).toEqual(
+      [
+        'GET /health/live',
+        'GET /health/ready',
+        'GET /openapi.json',
+        'POST /auth/login',
+        'POST /auth/mfa/enroll/begin',
+        'POST /auth/mfa/enroll/complete',
+        'POST /auth/mfa/verify',
+        'POST /auth/refresh',
+        'POST /auth/register',
+      ].sort(),
+    );
+  });
+
+  it('subir com uma rota SEM config.access falha', async () => {
+    const built = await buildApp({ env: envForBroken(), ctx: ctxForBroken(), logger: false });
+    // o erro lançado ao registrar a rota derruba a subida (register ou ready)
+    await expect(async () => {
+      await built.app.register(async (inst) => {
+        inst.get('/esquecida', () => 'oi');
+        await Promise.resolve();
+      });
+      await built.app.ready();
+    }).rejects.toThrow(/não declara config\.access/);
+    await built.app.close().catch(() => undefined);
+  });
+
+  it('sem cookie de sessão toda rota protegida responde 401', async () => {
+    for (const [key, a] of routeAccess) {
+      if (a.kind === 'public') continue;
+      const [method, url] = key.split(' ') as ['GET' | 'POST' | 'PATCH' | 'DELETE', string];
+      const res = await call(
+        null,
+        method,
+        url
+          .replace(':id', '00000000-0000-7000-8000-000000000000')
+          .replace(':familyId', '00000000-0000-7000-8000-000000000000'),
+        method === 'GET' ? undefined : {},
+      );
+      expect(res.statusCode, `${key} deveria exigir sessão`).toBe(401);
+    }
+  });
+});
+
+let brokenEnv: ReturnType<typeof loadEnv> | undefined;
+let brokenCtx: Ctx | undefined;
+function envForBroken() {
+  brokenEnv ??= loadEnv({
+    PUBLIC_URL: ORIGIN,
+    DATABASE_URL: 'postgres://x:x@127.0.0.1:1/x',
+    VALKEY_URL: 'redis://127.0.0.1:1',
+    S3_ENDPOINT: 'http://127.0.0.1:1',
+    S3_REGION: 'x',
+    S3_BUCKET: 'x',
+    S3_ACCESS_KEY: 'x',
+    S3_SECRET_KEY: 'x',
+    MASTER_KEY: randomBytes(32).toString('base64'),
+    SESSION_SECRET: 'z'.repeat(48),
+  });
+  return brokenEnv;
+}
+function ctxForBroken() {
+  const e = envForBroken();
+  brokenCtx ??= createCtx(t.app.db, {
+    sessionSecret: e.SESSION_SECRET,
+    masterKey: e.MASTER_KEY,
+    masterKeyPrevious: [],
+    accessTtlSeconds: 600,
+    refreshTtlSeconds: 1000,
+    challengeTtlSeconds: 300,
+    issuer: 'WayChat',
+  });
+  return brokenCtx;
+}
+
+describe('sessão por cookie, CSRF e origem', () => {
+  it('registro loga na hora; cookies são HttpOnly/SameSite e o refresh fica restrito a /auth', async () => {
+    const { res } = await register();
+    const byName = Object.fromEntries(res.cookies.map((c) => [c.name, c]));
+    expect(byName['wc_at']).toMatchObject({ httpOnly: true, sameSite: 'Lax', path: '/' });
+    expect(byName['wc_rt']).toMatchObject({ httpOnly: true, sameSite: 'Lax', path: '/auth' });
+    expect(byName['wc_csrf']?.httpOnly).toBeFalsy(); // legível de propósito (double-submit)
+    expect(res.body).not.toContain(byName['wc_at']?.value ?? 'x'); // tokens nunca vão no corpo
+    expect(res.body).not.toContain(byName['wc_rt']?.value ?? 'x');
+  });
+
+  it('GET /auth/me devolve perfil e permissões', async () => {
+    const { s, email } = await register('Loja');
+    const res = await call(s, 'GET', '/auth/me');
+    expect(res.statusCode).toBe(200);
+    const me = res.json();
+    expect(me.user.email).toBe(email);
+    expect(me.account.name).toBe('Loja');
+    expect(me.role.name).toBe('Owner');
+    expect(me.permissions).toContain('members:manage');
+  });
+
+  it('requisição que muda estado sem o header CSRF, ou com ele errado, é recusada', async () => {
+    const { s } = await register();
+    const none = await call(s, 'PATCH', '/account', { name: 'Novo nome' }, { csrf: false });
+    expect(none.statusCode).toBe(403);
+    const wrong = await call(
+      s,
+      'PATCH',
+      '/account',
+      { name: 'Novo nome' },
+      { csrf: false, headers: { 'x-csrf-token': 'outro-valor' } },
+    );
+    expect(wrong.statusCode).toBe(403);
+    const ok = await call(s, 'PATCH', '/account', { name: 'Novo nome' });
+    expect(ok.statusCode).toBe(200);
+  });
+
+  it('Origin de outro site é recusada, inclusive em rotas públicas', async () => {
+    const { s } = await register();
+    const evil = await call(
+      s,
+      'PATCH',
+      '/account',
+      { name: 'x' },
+      { headers: { origin: 'https://evil.example' } },
+    );
+    expect(evil.statusCode).toBe(403);
+    const login = await call(
+      null,
+      'POST',
+      '/auth/login',
+      { email: 'a@b.com', password: 'x' },
+      { headers: { origin: 'https://evil.example' } },
+    );
+    expect(login.statusCode).toBe(403);
+    const good = await call(
+      s,
+      'PATCH',
+      '/account',
+      { name: 'Certo' },
+      { headers: { origin: ORIGIN } },
+    );
+    expect(good.statusCode).toBe(200);
+  });
+
+  it('logout apaga os cookies e invalida a sessão', async () => {
+    const { s } = await register();
+    const out = await call(s, 'POST', '/auth/logout');
+    expect(out.statusCode).toBe(200);
+    expect(out.cookies.map((c) => c.name).sort()).toEqual(['wc_at', 'wc_csrf', 'wc_rt']);
+    expect((await call(s, 'GET', '/auth/me')).statusCode).toBe(401);
+  });
+});
+
+describe('refresh pela API', () => {
+  it('access vencido dá 401; POST /auth/refresh rotaciona os cookies; reuso derruba tudo', async () => {
+    const { s } = await register();
+    step(601);
+    expect((await call(s, 'GET', '/auth/me')).statusCode).toBe(401);
+
+    const refreshed = await call(s, 'POST', '/auth/refresh');
+    expect(refreshed.statusCode).toBe(200);
+    const s2 = sessionFrom(refreshed, s.ip);
+    expect(s2.cookie).not.toBe(s.cookie);
+    expect((await call(s2, 'GET', '/auth/me')).statusCode).toBe(200);
+
+    const replay = await call(s, 'POST', '/auth/refresh'); // refresh antigo reapresentado
+    expect(replay.statusCode).toBe(401);
+    expect(replay.cookies.map((c) => c.name)).toContain('wc_rt'); // cookies limpos
+    expect((await call(s2, 'GET', '/auth/me')).statusCode).toBe(401); // família revogada
+  });
+
+  it('sem cookie de refresh: 401', async () => {
+    expect((await call(null, 'POST', '/auth/refresh')).statusCode).toBe(401);
+  });
+});
+
+describe('RBAC pela API', () => {
+  it('Agente lê a conta mas não lista membros nem cria papéis; Owner cria e o Agente loga', async () => {
+    const { s: owner } = await register();
+    const roles = (await call(owner, 'GET', '/roles')).json().items as {
+      id: string;
+      name: string;
+    }[];
+    const agentRole = roles.find((r) => r.name === 'Agente');
+    const email = `ag-${uniq()}@exemplo.com`;
+    const add = await call(owner, 'POST', '/members', {
+      email,
+      name: 'Ana',
+      password: PASSWORD,
+      role_id: agentRole?.id,
+    });
+    expect(add.statusCode, add.body).toBe(201);
+
+    const addr = ip();
+    const login = await call(
+      null,
+      'POST',
+      '/auth/login',
+      { email, password: PASSWORD },
+      { ip: addr },
+    );
+    const agent = sessionFrom(login, addr);
+    expect((await call(agent, 'GET', '/account')).statusCode).toBe(200);
+    expect((await call(agent, 'GET', '/members')).statusCode).toBe(403);
+    expect((await call(agent, 'POST', '/roles', { name: 'x', permissions: [] })).statusCode).toBe(
+      403,
+    );
+    expect((await call(agent, 'GET', '/audit-logs')).statusCode).toBe(403);
+  });
+
+  it('anti-escalada e último Owner chegam como 403/409 com código estável', async () => {
+    const { s: owner } = await register();
+    const me = (await call(owner, 'GET', '/auth/me')).json();
+    const last = await call(owner, 'DELETE', `/members/${me.user.id as string}`);
+    expect(last.statusCode).toBe(409);
+    expect(last.json().error.code).toBe('last_owner');
+
+    const badPerm = await call(owner, 'POST', '/roles', {
+      name: 'Ruim',
+      permissions: ['inventado:x'],
+    });
+    expect(badPerm.statusCode).toBe(422);
+    expect(badPerm.json().error.code).toBe('invalid_permission');
+  });
+
+  it('isolamento: o Owner da conta A não vê membros nem auditoria da conta B', async () => {
+    const { s: a } = await register('Conta A');
+    const { email: emailB } = await register('Conta B');
+    const members = (await call(a, 'GET', '/members')).json().items as { email: string }[];
+    expect(members.some((m) => m.email === emailB)).toBe(false);
+    const audit = (await call(a, 'GET', '/audit-logs')).json().items as unknown[];
+    expect(audit.length).toBeGreaterThan(0);
+  });
+
+  it('auditoria pagina por cursor sem repetir itens', async () => {
+    const { s } = await register();
+    for (let i = 0; i < 3; i++)
+      await call(s, 'PATCH', '/account', { name: `Nome ${String(i)} ok` });
+    const p1 = (await call(s, 'GET', '/audit-logs?limit=2')).json();
+    expect(p1.items).toHaveLength(2);
+    expect(p1.nextCursor).toBeTruthy();
+    const p2 = (
+      await call(s, 'GET', `/audit-logs?limit=2&before=${p1.nextCursor as string}`)
+    ).json();
+    const ids = [...p1.items, ...p2.items].map((i: { id: string }) => i.id);
+    expect(new Set(ids).size).toBe(ids.length);
+  });
+});
+
+describe('2FA pela API', () => {
+  it('ativar, exigir no login e entrar com o código', async () => {
+    const { s, email } = await register();
+    const begin = (await call(s, 'POST', '/auth/mfa/totp/begin')).json();
+    expect(begin.otpauth_uri).toMatch(/^otpauth:\/\/totp\//);
+    const code = generateSync({ secret: begin.secret, epoch: Math.floor(clock / 1000) });
+    const confirm = await call(s, 'POST', '/auth/mfa/totp/confirm', { code });
+    expect(confirm.statusCode, confirm.body).toBe(200);
+    expect(confirm.json().recovery_codes).toHaveLength(10);
+
+    step(60);
+    const addr = ip();
+    const l = await call(null, 'POST', '/auth/login', { email, password: PASSWORD }, { ip: addr });
+    expect(l.json().status).toBe('mfa_required');
+    expect(l.cookies).toHaveLength(0); // sem sessão até o segundo fator
+
+    const bad = await call(
+      null,
+      'POST',
+      '/auth/mfa/verify',
+      { challenge: l.json().challenge, code: '000000' },
+      { ip: addr },
+    );
+    expect(bad.statusCode).toBe(401);
+    const good = await call(
+      null,
+      'POST',
+      '/auth/mfa/verify',
+      {
+        challenge: l.json().challenge,
+        code: generateSync({ secret: begin.secret, epoch: Math.floor(clock / 1000) }),
+      },
+      { ip: addr },
+    );
+    expect(good.statusCode, good.body).toBe(200);
+    expect((await call(sessionFrom(good, addr), 'GET', '/auth/me')).statusCode).toBe(200);
+  });
+});
+
+describe('robustez e vazamento de informação', () => {
+  it('login: e-mail inexistente e senha errada têm a mesma resposta', async () => {
+    const { email } = await register();
+    const a = await call(null, 'POST', '/auth/login', {
+      email: `nao-${uniq()}@exemplo.com`,
+      password: 'qualquer-coisa-12',
+    });
+    const b = await call(null, 'POST', '/auth/login', { email, password: 'senha-errada-1234' });
+    expect(a.statusCode).toBe(401);
+    expect(b.statusCode).toBe(401);
+    const strip = (r: LightMyRequestResponse) => {
+      const j = r.json();
+      delete j.error.request_id;
+      return j;
+    };
+    expect(strip(a)).toEqual(strip(b));
+  });
+
+  it('validação devolve 400 com o caminho do campo e sem ecoar valores sensíveis', async () => {
+    const res = await call(null, 'POST', '/auth/login', {
+      email: 'nao-e-email',
+      password: 'segredo-que-nao-pode-vazar',
+    });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error.code).toBe('validation_error');
+    expect(res.body).not.toContain('segredo-que-nao-pode-vazar');
+  });
+
+  it('rota inexistente e corpo gigante têm formato padrão', async () => {
+    const nf = await call(null, 'GET', '/nao-existe');
+    expect(nf.statusCode).toBe(404);
+    expect(nf.json().error.code).toBe('not_found');
+    const big = await app.inject({
+      method: 'POST',
+      url: '/auth/login',
+      remoteAddress: ip(),
+      headers: { 'content-type': 'application/json' },
+      payload: JSON.stringify({ email: 'a@b.com', password: 'x'.repeat(1024 * 1024 + 10) }),
+    });
+    expect(big.statusCode).toBe(413);
+    expect(big.json().error.code).toBe('payload_too_large');
+  });
+
+  it('rate limit no login: a 11ª tentativa no minuto vira 429', async () => {
+    const addr = ip();
+    let last = 0;
+    for (let i = 0; i < 11; i++) {
+      last = (
+        await call(
+          null,
+          'POST',
+          '/auth/login',
+          { email: `x-${uniq()}@exemplo.com`, password: 'qualquer-coisa-12' },
+          { ip: addr },
+        )
+      ).statusCode;
+    }
+    expect(last).toBe(429);
+  });
+
+  it('cabeçalhos de segurança presentes e sem x-powered-by', async () => {
+    const res = await call(null, 'GET', '/health/live');
+    expect(res.headers['x-content-type-options']).toBe('nosniff');
+    expect(res.headers['content-security-policy']).toContain("default-src 'none'");
+    expect(res.headers['content-security-policy']).toContain("frame-ancestors 'none'");
+    expect(res.headers['content-security-policy']).not.toContain('script-src'); // sem diretivas herdadas do helmet
+    expect(res.headers['x-frame-options']).toBe('DENY');
+    expect(res.headers['referrer-policy']).toBe('no-referrer');
+    expect(res.headers['x-powered-by']).toBeUndefined();
+    expect(res.headers['x-request-id']).toBeTruthy();
+  });
+
+  it('X-Request-Id só é aceito se for UUID', async () => {
+    const good = '0198f3a0-1111-7222-8333-444455556666';
+    expect(
+      (await call(null, 'GET', '/health/live', undefined, { headers: { 'x-request-id': good } }))
+        .headers['x-request-id'],
+    ).toBe(good);
+    const bad = await call(null, 'GET', '/health/live', undefined, {
+      headers: { 'x-request-id': 'injetado\nfalso' },
+    });
+    expect(bad.headers['x-request-id']).not.toContain('injetado');
+  });
+
+  it('CORS só libera a origem do painel', async () => {
+    const ok = await app.inject({
+      method: 'OPTIONS',
+      url: '/auth/me',
+      headers: { origin: ORIGIN, 'access-control-request-method': 'GET' },
+    });
+    expect(ok.headers['access-control-allow-origin']).toBe(ORIGIN);
+    expect(ok.headers['access-control-allow-credentials']).toBe('true');
+    const evil = await app.inject({
+      method: 'OPTIONS',
+      url: '/auth/me',
+      headers: { origin: 'https://evil.example', 'access-control-request-method': 'GET' },
+    });
+    // o servidor só anuncia a origem do painel; o navegador bloqueia qualquer outra
+    expect(evil.headers['access-control-allow-origin']).toBe(ORIGIN);
+    expect(evil.headers['access-control-allow-origin']).not.toBe('https://evil.example');
+  });
+
+  it('health/ready confirma o Postgres e openapi.json lista as rotas', async () => {
+    const ready = await call(null, 'GET', '/health/ready');
+    expect(ready.statusCode).toBe(200);
+    expect(ready.json().checks.postgres).toBe('ok');
+    const spec = (await call(null, 'GET', '/openapi.json')).json();
+    expect(Object.keys(spec.paths)).toEqual(
+      expect.arrayContaining(['/auth/login', '/members', '/roles', '/audit-logs']),
+    );
+  });
+});
+
+describe('métricas', () => {
+  it('registra latência por rota (padrão da rota, nunca o id real) e conta 5xx', async () => {
+    const { s } = await register();
+    const me = (await call(s, 'GET', '/auth/me')).json();
+    await call(s, 'DELETE', `/members/${me.user.id as string}`); // 409 last_owner, mas passa pela rota
+    const text = await registry.metrics();
+    expect(text).toContain('http_request_duration_seconds_bucket');
+    expect(text).toMatch(/route="\/members\/:id"/);
+    expect(text).not.toContain(me.user.id); // nenhum id de cliente vaza para as métricas
+    expect(text).not.toMatch(/wc_at|wc_rt/);
+  });
+});

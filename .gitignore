@@ -1,0 +1,16 @@
+node_modules/
+dist/
+.turbo/
+coverage/
+storybook-static/
+.env
+.env.*
+!.env.example
+*.log
+graphify-out/
+.DS_Store
+
+# Referências locais (não fazem parte do produto)
+base-sistema/
+imgref/
+.claude/settings.local.json

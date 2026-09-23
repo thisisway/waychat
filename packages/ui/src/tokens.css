@@ -1,0 +1,126 @@
+/*
+ * Tokens do design system WayChat (seção 10A do prompt). Única fonte de cor, raio, sombra e movimento:
+ * componentes nunca usam valor fixo, sempre estes tokens (via Tailwind em theme.css ou var(--...)).
+ *
+ * Tema: o atributo data-theme="light|dark" no <html> (ou em qualquer contêiner) escolhe o conjunto (veja initTheme em lib/theme.ts, que
+ * respeita a preferência do sistema e o toggle "Modo escuro").
+ *
+ * Desvios do valor de referência para cumprir contraste WCAG AA (teste em contrast.test.ts). Registro em
+ * docs/design/tokens-decisions.md.
+ */
+
+:root,
+[data-theme='light'] {
+  color-scheme: light;
+
+  /* Fundos */
+  --bg-app: #c1cada;
+  --bg-shell: #f5f7fb;
+  --surface: #ffffff;
+  --surface-muted: #f2f4f7;
+  --surface-input: #f5f7fb;
+  --surface-info: #f2f7fa;
+  --chat-bg: #eff3f8;
+  --bubble-in: #ffffff;
+  --bubble-out: #cae7fb;
+
+  /* Ação (único azul vibrante) */
+  --primary: #1560ff;
+  --primary-hover: #0f4cdc;
+  --primary-soft: #ebf3fa;
+  --primary-text: #1560ff; /* azul para TEXTO/ícone sobre superfícies; no escuro é mais claro */
+  --on-primary: #ffffff;
+
+  /* Texto */
+  --text: #16181d;
+  --text-secondary: #5a5e64; /* ref. #686C70, escurecido p/ manter hierarquia acima do muted */
+  --text-muted: #6a6e75; /* ref. #8A8E94 falhava AA (3,3:1) */
+
+  /* Estados */
+  --success: #0a9426;
+  --offline: #c4c8ce;
+  --unread: #ffdb31;
+  --on-unread: #16181d;
+  --danger: #eb4240; /* pontos, ícones, bordas */
+  --danger-text: #c62828; /* texto de erro (a referência dava 3,9:1) */
+  --warning-bg: #ffefb4;
+  --warning-text: #8c4915;
+  --warning-dot: #d7600f;
+  --note-bg: #eaefc5;
+  --note-meta: #5f6349; /* ref. #767A5F: 3,7:1 */
+  --tooltip-bg: #3c3f45;
+  --on-tooltip: #ffffff;
+  --avatar-fallback: #1d76aa; /* ref. #2DABEE: branco sobre ele dava 2,6:1 */
+  --on-avatar: #ffffff;
+
+  /* Forma */
+  --radius-shell: 32px;
+  --radius-panel: 20px;
+  --radius-card: 16px;
+  --radius-control: 10px;
+
+  /* Profundidade (quase imperceptível) */
+  --shadow-soft: 0 1px 2px rgb(16 24 40 / 0.04), 0 4px 16px rgb(16 24 40 / 0.04);
+  --shadow-active: 0 4px 12px rgb(21 96 255 / 0.28);
+  --focus-ring: rgb(21 96 255 / 0.3);
+  --hairline: rgb(16 24 40 / 0.06);
+
+  /* Movimento */
+  --motion-fast: 150ms;
+  --motion-base: 200ms;
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+
+  --font-sans: 'Plus Jakarta Sans Variable', system-ui, -apple-system, 'Segoe UI', sans-serif;
+}
+
+[data-theme='dark'] {
+  color-scheme: dark;
+
+  --bg-app: #0f1115;
+  --bg-shell: #15181d;
+  --surface: #1b1f26;
+  --surface-muted: #232833;
+  --surface-input: #12151a;
+  --surface-info: #20252e;
+  --chat-bg: #12151a;
+  --bubble-in: #232833;
+  --bubble-out: #16335f;
+
+  --primary: #1560ff; /* mesmo azul de ação (botões) */
+  --primary-hover: #0f4cdc; /* mais escuro também no tema escuro: texto branco mantém AA */
+  --primary-soft: #1a2a4d;
+  --primary-text: #7aa5ff; /* #1560FF sobre superfície escura dá só ~3:1 para texto */
+  --on-primary: #ffffff;
+
+  --text: #e8eaed;
+  --text-secondary: #a0a6af;
+  --text-muted: #8f959f;
+
+  --success: #34c759;
+  --offline: #5a606a;
+  --unread: #ffdb31;
+  --on-unread: #16181d;
+  --danger: #ff6b68;
+  --danger-text: #ff8a87;
+  --warning-bg: #3a2e10;
+  --warning-text: #f5c26b;
+  --warning-dot: #f08a3c;
+  --note-bg: #2f3320;
+  --note-meta: #b7bb98;
+  --tooltip-bg: #3c3f45;
+  --on-tooltip: #ffffff;
+  --avatar-fallback: #1d76aa;
+  --on-avatar: #ffffff;
+
+  --shadow-soft: 0 1px 2px rgb(0 0 0 / 0.3), 0 4px 16px rgb(0 0 0 / 0.25);
+  --shadow-active: 0 4px 12px rgb(21 96 255 / 0.4);
+  --focus-ring: rgb(122 165 255 / 0.4);
+  --hairline: rgb(255 255 255 / 0.08);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --motion-fast: 0.01ms;
+    --motion-base: 0.01ms;
+  }
+}

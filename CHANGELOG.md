@@ -1,0 +1,20 @@
+# Changelog
+
+Formato baseado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/).
+
+## [Não lançado]
+
+### Fase 0 — Fundação
+
+**Adicionado**
+
+- Monorepo pnpm + Turborepo, TypeScript strict, ESLint, Prettier, Vitest.
+- `packages/db`: schema (contas, usuários, papéis, sessões, MFA, chaves de API, auditoria, eventos de entrada, outbox), migrações, RLS forçada com testes de isolamento entre tenants, auditoria append-only.
+- `packages/core`: registro de conta, login com bloqueio progressivo, TOTP + códigos de recuperação, sessões com refresh rotativo e detecção de reuso, RBAC com papéis de sistema e customizados, anti-escalada de privilégio, proteção do último Owner, auditoria, cifragem AES-256-GCM com rotação de chave.
+- `apps/api`: Fastify com validação Zod, OpenAPI, cookies HttpOnly, CSRF, rate limit, cabeçalhos de segurança, CORS restrito, health checks, métricas Prometheus e trava que impede rotas sem declaração de acesso.
+- `apps/worker`: relay do Transactional Outbox (`SKIP LOCKED`, at-least-once), filas BullMQ com backoff exponencial + jitter e dead-letter queue.
+- Observabilidade: logs JSON com redaction e `trace_id`, OpenTelemetry com o trace continuando pelo outbox até o worker, métricas em porta separada.
+- Infra: Docker Compose de desenvolvimento (Postgres 16 + pgvector, Valkey, MinIO), Dockerfile distroless não-root.
+- CI (GitHub Actions): lint, tipos, build, testes, `pnpm audit`, gitleaks, Semgrep, Trivy; Dependabot.
+- `packages/ui`: tokens de cor/forma/movimento nos temas claro e escuro, Tailwind v4, Plus Jakarta Sans auto-hospedada, 13 componentes base acessíveis, Storybook com os dois temas e teste de contraste WCAG AA (78 verificações).
+- ADRs 0001–0005, `SECURITY.md`.
