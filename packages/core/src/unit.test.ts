@@ -38,6 +38,15 @@ describe('Keyring (AES-256-GCM)', () => {
     ).toThrow();
   });
 
+  it('recusa tag de autenticação truncada (forja por tag curta)', () => {
+    const k = new Keyring(key());
+    const [v, kid, iv, tag, ct] = k.encrypt('segredo', 'a').split('.');
+    const short = Buffer.from(tag ?? '', 'base64url')
+      .subarray(0, 4)
+      .toString('base64url');
+    expect(() => k.decrypt([v, kid, iv, short, ct].join('.'), 'a')).toThrow(/tag/);
+  });
+
   it('rotação: decifra com chave antiga, cifra com a nova e sinaliza recifragem', () => {
     const oldKey = key();
     const enc = new Keyring(oldKey).encrypt('segredo', 'a');

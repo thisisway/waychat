@@ -3,6 +3,7 @@ updates:
   - package-ecosystem: npm
     directory: /
     schedule: { interval: weekly }
+    cooldown: { default-days: 7 } # só propõe versões com 7+ dias de publicadas
     open-pull-requests-limit: 10
     groups:
       minor-and-patch:
@@ -10,6 +11,8 @@ updates:
   - package-ecosystem: github-actions
     directory: /
     schedule: { interval: weekly }
+    cooldown: { default-days: 7 } # só propõe versões com 7+ dias de publicadas
   - package-ecosystem: docker
     directory: /infra/docker
     schedule: { interval: weekly }
+    cooldown: { default-days: 7 } # só propõe versões com 7+ dias de publicadas

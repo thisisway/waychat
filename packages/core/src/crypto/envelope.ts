@@ -6,6 +6,8 @@ import { createCipheriv, createDecipheriv, createHash, randomBytes } from 'node:
  * cifra sempre com a chave atual e decifra com qualquer chave do chaveiro (atual + anteriores).
  * `aad` amarra o texto cifrado ao contexto (ex.: `mfa:<userId>`): copiar o valor para outra linha faz a decifragem falhar.
  */
+const TAG_LENGTH = 16;
+
 export class Keyring {
   private readonly keys = new Map<string, Buffer>();
   private readonly currentKid: string;
@@ -30,7 +32,7 @@ export class Keyring {
     const key = this.keys.get(this.currentKid);
     if (!key) throw new Error('chave atual ausente');
     const iv = randomBytes(12);
-    const cipher = createCipheriv('aes-256-gcm', key, iv);
+    const cipher = createCipheriv('aes-256-gcm', key, iv, { authTagLength: TAG_LENGTH });
     cipher.setAAD(Buffer.from(aad));
     const ct = Buffer.concat([cipher.update(plaintext, 'utf8'), cipher.final()]);
     return ['v1', this.currentKid, iv, cipher.getAuthTag(), ct]
@@ -44,9 +46,14 @@ export class Keyring {
       throw new Error('formato de segredo inválido');
     const key = this.keys.get(kid);
     if (!key) throw new Error('chave de cifragem desconhecida (rotação incompleta?)');
-    const decipher = createDecipheriv('aes-256-gcm', key, Buffer.from(iv, 'base64url'));
+    const tagBytes = Buffer.from(tag, 'base64url');
+    // Sem exigir 16 bytes, um atacante poderia enviar uma tag curta e forjar o texto cifrado.
+    if (tagBytes.length !== TAG_LENGTH) throw new Error('tag de autenticação inválida');
+    const decipher = createDecipheriv('aes-256-gcm', key, Buffer.from(iv, 'base64url'), {
+      authTagLength: TAG_LENGTH,
+    });
     decipher.setAAD(Buffer.from(aad));
-    decipher.setAuthTag(Buffer.from(tag, 'base64url'));
+    decipher.setAuthTag(tagBytes);
     return Buffer.concat([
       decipher.update(Buffer.from(ct, 'base64url')),
       decipher.final(),

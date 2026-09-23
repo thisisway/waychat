@@ -9,3 +9,10 @@ allowBuilds:
   ssh2: false
   protobufjs: false
   msgpackr-extract: false
+
+# Cadeia de suprimentos
+blockExoticSubdeps: true # dependências transitivas só do registro (nada de git/tarball arbitrário)
+trustPolicy: no-downgrade # recusa versões publicadas com menos garantias de proveniência que as anteriores
+minimumReleaseAge: 1440 # minutos (1 dia). Semgrep recomenda 7 dias, mas o lockfile atual tem versões de poucos dias; subir para 10080 quando estabilizar
+trustPolicyExclude:
+  - semver@6.3.1 # falso positivo: 6.3.1 é a última da linha 6.x (usada por dependências antigas), publicada depois de 7.x
