@@ -34,7 +34,7 @@ export async function relayOnce({ db, publish, batchSize = 100 }: RelayOptions):
     const events = rows.map((r) =>
       eventEnvelopeSchema.parse({
         event_id: r.id,
-        cursor: r.cursor,
+        cursor: r.accountSeq,
         account_id: r.accountId,
         type: r.eventType,
         occurred_at: r.createdAt.toISOString(),

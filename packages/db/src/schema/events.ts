@@ -46,7 +46,10 @@ export const outbox = pgTable(
   'outbox',
   {
     id: id(),
+    /** Ordem global de inserção: só usada pelo relay para varrer pendentes. */
     cursor: bigint('cursor', { mode: 'number' }).generatedAlwaysAsIdentity().notNull(),
+    /** Cursor público, por conta e SEM LACUNAS (trigger + `account_counters`, ADR 0006). Base do `GET /sync`. O default 0 é sempre sobrescrito pelo trigger. */
+    accountSeq: bigint('account_seq', { mode: 'number' }).notNull().default(0),
     accountId: uuid('account_id')
       .notNull()
       .references(() => accounts.id, { onDelete: 'cascade' }),
@@ -64,5 +67,6 @@ export const outbox = pgTable(
       .on(t.cursor)
       .where(sql`${t.publishedAt} is null`),
     index('outbox_account_cursor_idx').on(t.accountId, t.cursor),
+    unique('outbox_account_seq_uq').on(t.accountId, t.accountSeq),
   ],
 );

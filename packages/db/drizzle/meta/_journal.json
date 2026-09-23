@@ -36,6 +36,20 @@
       "when": 1790183372541,
       "tag": "0004_outbox_trace_context",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1790199727349,
+      "tag": "0005_chat_core",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1790199729805,
+      "tag": "0006_chat_rls_triggers",
+      "breakpoints": true
     }
   ]
 }

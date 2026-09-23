@@ -13,6 +13,8 @@ export interface TestDb {
   relay: DbHandle;
   /** Conexão do dono/superusuário (só para preparar cenários e checar o catálogo). */
   owner: DbHandle;
+  /** URLs de conexão, para abrir pools extras (testes de concorrência). */
+  urls: { app: string; owner: string; relay: string };
   stop: () => Promise<void>;
 }
 
@@ -40,6 +42,11 @@ export async function startTestDb(): Promise<TestDb> {
     app,
     relay,
     owner,
+    urls: {
+      app: url('waychat_app', 'app-pw'),
+      owner: url('waychat_owner', 'owner-pw'),
+      relay: url('waychat_relay', 'relay-pw'),
+    },
     stop: async () => {
       await Promise.all([app.close(), relay.close(), owner.close()]);
       await container.stop();

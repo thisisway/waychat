@@ -1,6 +1,6 @@
 # Plano — Fase 1 (Núcleo de atendimento)
 
-Status: **em execução** (o responsável delegou as decisões em aberto: "faça como achar melhor"; elas estão registradas abaixo).
+Status: **em execução** — passo 1 (banco) concluído. (O responsável delegou as decisões em aberto: "faça como achar melhor"; elas estão registradas abaixo.)
 
 ## Escopo (seção 16 do prompt)
 
@@ -17,7 +17,7 @@ Inboxes (canal API e widget web), contatos, conversas, mensagens, anexos, notas 
 
 ### D1 — Cursor de eventos sem lacunas, por conta (ADR 0006)
 
-O `cursor` do outbox da Fase 0 é uma coluna identity global: transações concorrentes podem confirmar fora de ordem, e um cliente que sincroniza com `since=N` pularia um evento `N-1` confirmado depois. Para o `GET /sync` ser correto, o cursor passa a ser **por conta e sem lacunas**: `enqueueEvent` faz `UPDATE account_counters SET seq = seq + 1 ... RETURNING seq` na própria transação. O UPDATE trava a linha do contador até o COMMIT, então a ordem de commit de uma conta é a ordem do cursor. O custo é serializar as escritas que geram evento _dentro da mesma conta_ (aceitável para dezenas de atendentes; contas diferentes não se bloqueiam). O envelope passa a carregar `cursor = account_seq`. A coluna identity antiga fica só para ordenar o relay.
+O `cursor` do outbox da Fase 0 é uma coluna identity global: transações concorrentes podem confirmar fora de ordem, e um cliente que sincroniza com `since=N` pularia um evento `N-1` confirmado depois. Para o `GET /sync` ser correto, o cursor passa a ser **por conta e sem lacunas**: um trigger `BEFORE INSERT` em `outbox` faz `INSERT ... ON CONFLICT DO UPDATE SET event_seq = event_seq + 1 RETURNING` em `account_counters`, na própria transação (vale para qualquer inserção, não só a de `enqueueEvent`). O UPSERT trava a linha do contador até o COMMIT, então a ordem de commit de uma conta é a ordem do cursor. O custo é serializar as escritas que geram evento _dentro da mesma conta_ (aceitável para dezenas de atendentes; contas diferentes não se bloqueiam). O envelope passa a carregar `cursor = account_seq`. A coluna identity antiga (`cursor`) fica só para o relay varrer pendentes; o cursor público é `account_seq`. O `display_id` das conversas usa o mesmo mecanismo.
 
 ### D2 — Ordenação por conversa
 
@@ -38,7 +38,7 @@ Um atendente vê conversas das **inboxes de que é membro** (`inbox_members`); O
 
 ### D6 — Autenticação do canal API
 
-Chaves de API (`Authorization: Bearer wc_<prefixo>_<segredo>`), escopos e expiração. A busca por prefixo antes de existir tenant usa uma função `SECURITY DEFINER` mínima (`auth_lookup_api_key`), pendência herdada da Fase 0.
+Chaves de API (`Authorization: Bearer wc_<prefixo>_<segredo>`), escopos e expiração. A busca por prefixo antes de existir tenant usa uma policy de leitura ligada a uma GUC (`app.api_key_prefix`, helper `withApiKeyPrefix`), o mesmo padrão de `member_self_read`: sem `SECURITY DEFINER` (que não funcionaria com RLS forçada e dono não-superusuário). O mesmo vale para localizar a inbox pela chave pública (`withInboxPublicKey`).
 
 ### D7 — Widget
 
@@ -56,22 +56,22 @@ Validação por magic bytes (não pela extensão), limite de tamanho por tipo, n
 
 Todas com `account_id`, RLS forçada e a policy padrão; incluídas no teste de catálogo.
 
-| Tabela                                                                            | Notas                                                                                                                                                                                        |
-| --------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `account_counters`                                                                | `account_id` PK, `event_seq`, `conversation_display_seq` (número sequencial de conversa por conta, sem lacunas)                                                                              |
-| `inboxes`, `inbox_members`                                                        | tipo `api` \| `widget`; `config` **cifrado** (AES-GCM, AAD `inbox:<id>`); `public_key` da inbox; horário de atendimento fica para a Fase 3                                                    |
-| `contacts`, `contact_identities`                                                  | identidade única `(account_id, channel, external_id)`; atributos em `jsonb`; mesclar contatos fica para a Fase 5                                                                             |
-| `conversations`                                                                   | `display_id` sequencial por conta, `status` (`open \| pending \| snoozed \| resolved`), prioridade, `assignee_id`, `last_customer_message_at`, `last_activity_at`; índice do prompt           |
-| `messages`                                                                        | direção, tipo, `content`, `content_attributes jsonb`, `private` (nota interna), `reply_to_id`, `source_id` único por inbox, `client_message_id` único, status; índice `(conversation_id, created_at DESC, id)` |
-| `attachments`                                                                     | `storage_key`, `content_type` detectado, `size`, `scan_status`                                                                                                                                |
-| `labels`, `conversation_labels`, `canned_responses`                               | atalho `/` único por conta                                                                                                                                                                   |
-| API: `auth_lookup_api_key()` (função)                                             | ver D6                                                                                                                                                                                        |
+| Tabela                                              | Notas                                                                                                                                                                                                          |
+| --------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `account_counters`                                  | `account_id` PK, `event_seq` (cursor de eventos) e `conversation_seq` (`display_id`), ambos sem lacunas                                                                                                        |
+| `inboxes`, `inbox_members`                          | tipo `api` \| `widget`; `config` **cifrado** (AES-GCM, AAD `inbox:<id>`); `public_key` da inbox; horário de atendimento fica para a Fase 3                                                                     |
+| `contacts`, `contact_identities`                    | identidade única `(account_id, channel, external_id)`; atributos em `jsonb`; mesclar contatos fica para a Fase 5                                                                                               |
+| `conversations`                                     | `display_id` sequencial por conta, `status` (`open \| pending \| snoozed \| resolved`), prioridade, `assignee_id`, `last_customer_message_at`, `last_activity_at`; índice do prompt                            |
+| `messages`                                          | direção, tipo, `content`, `content_attributes jsonb`, `private` (nota interna), `reply_to_id`, `source_id` único por inbox, `client_message_id` único, status; índice `(conversation_id, created_at DESC, id)` |
+| `attachments`                                       | `storage_key`, `content_type` detectado, `size`, `scan_status`                                                                                                                                                 |
+| `labels`, `conversation_labels`, `canned_responses` | atalho `/` único por conta                                                                                                                                                                                     |
+| Policies de leitura por chave pública               | `inbox_public_key_read` e `api_key_prefix_read` (ver D6)                                                                                                                                                       |
 
 Mensagens são `content` texto; conteúdo de mensagem **nunca** vai para log nem para métricas (redaction já cobre `content`).
 
 ## Ordem de execução (cada passo termina com testes verdes e commit)
 
-1. **Banco:** `account_counters` + cursor por conta (ADR 0006), tabelas acima, RLS, `auth_lookup_api_key`, testes de isolamento e de gap-free sob concorrência.
+1. **Banco:** `account_counters` + cursor por conta (ADR 0006), tabelas acima, RLS, policies de leitura por chave, testes de isolamento e de gap-free sob concorrência.
 2. **Contatos e inboxes** (core + API): CRUD com permissões novas (`inboxes:manage`, `contacts:*`), chaves de API, config cifrada.
 3. **Conversas e mensagens** (core): abrir/encontrar conversa, inserir mensagem sob lock, idempotência, status, atribuição, notas internas, labels, respostas prontas; tudo emite eventos pelo outbox.
 4. **Visibilidade e `GET /sync`**: filtro por inbox em REST e sync, paginação por cursor, testes de vazamento entre atendentes.
@@ -85,13 +85,13 @@ Mensagens são `content` texto; conteúdo de mensagem **nunca** vai para log nem
 
 ## Riscos
 
-| Risco                                                                                         | Mitigação                                                                                                                       |
-| --------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
-| Cursor por conta serializa escritas com evento na mesma conta                                 | Medido em teste de carga; a região crítica é só o UPDATE do contador, que fica no fim da transação                              |
-| Widget estourar 50 KB                                                                         | Preact, sem dependências de UI, orçamento verificado em CI                                                                      |
-| Regressão visual frágil (fonte, antialiasing)                                                 | Baseline gerada no mesmo container do CI (Playwright oficial); tolerância pequena e explícita                                   |
-| As imagens de referência são recortes inclinados, não telas frontais                           | Reproduzir os tokens, proporções e componentes descritos na 10A; a comparação é por regiões (lista, área, painel), não pixel a pixel com a imagem |
-| ClamAV pesado no CI                                                                           | Testes de varredura usam o `clamd` do compose só na suíte de integração; unitários usam um scanner fake                          |
+| Risco                                                                | Mitigação                                                                                                                                         |
+| -------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Cursor por conta serializa escritas com evento na mesma conta        | Medido em teste de carga; a região crítica é só o UPDATE do contador, que fica no fim da transação                                                |
+| Widget estourar 50 KB                                                | Preact, sem dependências de UI, orçamento verificado em CI                                                                                        |
+| Regressão visual frágil (fonte, antialiasing)                        | Baseline gerada no mesmo container do CI (Playwright oficial); tolerância pequena e explícita                                                     |
+| As imagens de referência são recortes inclinados, não telas frontais | Reproduzir os tokens, proporções e componentes descritos na 10A; a comparação é por regiões (lista, área, painel), não pixel a pixel com a imagem |
+| ClamAV pesado no CI                                                  | Testes de varredura usam o `clamd` do compose só na suíte de integração; unitários usam um scanner fake                                           |
 
 ## Fora de escopo (vai para `docs/backlog.md`)
 
