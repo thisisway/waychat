@@ -65,7 +65,7 @@ jobs:
       - name: Build
         run: docker build -f infra/docker/node.Dockerfile --target ${{ matrix.app }} --build-arg APP=${{ matrix.app }} -t waychat-${{ matrix.app }}:ci .
       - name: Trivy (HIGH e CRITICAL falham o build)
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: waychat-${{ matrix.app }}:ci
           severity: HIGH,CRITICAL
