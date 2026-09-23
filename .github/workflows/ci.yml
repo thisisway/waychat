@@ -18,7 +18,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: pnpm/action-setup@v4 # versão vem do campo packageManager
       - uses: actions/setup-node@v4
         with:
@@ -37,7 +37,7 @@ jobs:
     name: Varredura de segredos (gitleaks)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
       - uses: gitleaks/gitleaks-action@v2
@@ -50,7 +50,7 @@ jobs:
     container:
       image: semgrep/semgrep:latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - run: semgrep scan --config p/typescript --config p/nodejs --config p/owasp-top-ten --error --metrics off --exclude '**/*.test.ts' .
 
   images:
@@ -61,7 +61,7 @@ jobs:
       matrix:
         app: [api, worker]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Build
         run: docker build -f infra/docker/node.Dockerfile --target ${{ matrix.app }} --build-arg APP=${{ matrix.app }} -t waychat-${{ matrix.app }}:ci .
       - name: Trivy (HIGH e CRITICAL falham o build)
