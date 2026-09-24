@@ -12,6 +12,7 @@ Formato baseado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/).
 - Canal API: `POST /api/v1/messages` com chave Bearer (escopo `messages:write`), idempotente por `external_id`; só escreve em inbox do canal API da própria conta.
 - Widget de chat (`apps/widget`): Preact + Shadow DOM, 23,5 KB gzip, pré-chat, identidade por HMAC, pt-BR/en/es, reconexão com recuperação, respostas em tempo real (ADR 0008).
 - Anexos no painel e no widget: upload direto ao S3 por formulário assinado (10 MB), tipo conferido pela assinatura do arquivo, varredura ClamAV em fila, download por link de 5 minutos (ADR 0009). Pacote `@waychat/storage`.
+- Relay do outbox acordado por `NOTIFY` no COMMIT (polling só como rede de segurança): mensagem do visitante chega ao painel com p95 ≈ 40 ms e a resposta do atendente ao visitante com p95 ≈ 30 ms na cadeia real (Postgres → relay → Valkey → WebSocket), meta de 500 ms.
 - `GET /sync`: eventos desde um cursor, com a mesma regra de visibilidade do WebSocket.
 
 ### Fase 0 — Fundação
