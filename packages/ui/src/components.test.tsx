@@ -333,7 +333,7 @@ describe('anexos no chat', () => {
     expect(screen.getByText('2,3 MB')).toBeInTheDocument();
   });
 
-  it('Composer: com arquivo pronto envia mesmo sem texto', async () => {
+  it('Composer: com arquivo pronto envia mesmo sem texto', () => {
     const onSend = vi.fn(() => true);
     render(<Composer onSend={onSend} drafts={[pronto]} onAttach={vi.fn()} />);
     const send = screen.getByRole('button', { name: 'Enviar mensagem' });

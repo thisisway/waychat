@@ -27,7 +27,7 @@ describe('rascunho de anexos', () => {
   it('fluxo: URL assinada → envio ao S3 → conclusão → varredura → pronto', async () => {
     let scans = 0;
     fetchMock.mockImplementation((url, init) => {
-      const u = String(url);
+      const u = typeof url === 'string' ? url : url instanceof URL ? url.href : url.url;
       if (u === 'https://s3.test/bucket') {
         const form = init?.body as FormData;
         expect([...form.keys()]).toEqual(['key', 'file']); // campos assinados primeiro, arquivo por último
@@ -80,7 +80,7 @@ describe('rascunho de anexos', () => {
 
   it('falha do S3 marca erro; remover tira do rascunho; no máximo 5', async () => {
     fetchMock.mockImplementation((url) => {
-      const u = String(url);
+      const u = typeof url === 'string' ? url : url instanceof URL ? url.href : url.url;
       if (u === 'https://s3.test/bucket')
         return Promise.resolve(new Response('x', { status: 403 }));
       return Promise.resolve(
