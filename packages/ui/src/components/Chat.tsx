@@ -170,6 +170,8 @@ export interface ComposerProps {
   placeholder?: string;
   /** Rótulo do canal ("WhatsApp", "Widget") exibido no chip. */
   channelLabel?: string;
+  /** Avisa que o atendente está (ou parou de) digitando; quem usa aplica o limite de taxa. */
+  onTyping?: (on: boolean) => void;
 }
 
 /**
@@ -182,6 +184,7 @@ export function Composer({
   disabled,
   placeholder,
   channelLabel,
+  onTyping,
 }: ComposerProps) {
   const [text, setText] = useState('');
   const [mode, setMode] = useState<'reply' | 'note'>('reply');
@@ -216,7 +219,10 @@ export function Composer({
     if (!value || busy || disabled) return;
     setBusy(true);
     try {
-      if (await onSend(value, mode)) setText('');
+      if (await onSend(value, mode)) {
+        setText('');
+        onTyping?.(false);
+      }
     } finally {
       setBusy(false);
     }
@@ -320,6 +326,10 @@ export function Composer({
           }
           onChange={(e) => {
             setText(e.target.value);
+            if (mode === 'reply' && e.target.value.trim()) onTyping?.(true);
+          }}
+          onBlur={() => {
+            onTyping?.(false);
           }}
           onKeyDown={onKey}
           className="max-h-40 min-h-10 flex-1 resize-none bg-transparent py-2 text-body text-fg placeholder:text-fg-muted focus:outline-none"

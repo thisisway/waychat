@@ -24,7 +24,10 @@ export default defineConfig({
   plugins: [react(), tailwindcss()],
   server: {
     port: 5173,
-    proxy: Object.fromEntries(apiPaths.map((p) => [p, { target: API, changeOrigin: false }])),
+    proxy: {
+      ...Object.fromEntries(apiPaths.map((p) => [p, { target: API, changeOrigin: false }])),
+      '/socket.io': { target: API, ws: true, changeOrigin: false },
+    },
   },
   test: { environment: 'jsdom', setupFiles: ['./src/test-setup.ts'], css: false },
 });

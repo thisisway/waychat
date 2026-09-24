@@ -29,6 +29,7 @@ export {
 } from './modules/identity/application/mfa.js';
 export {
   authenticate,
+  actorForSession,
   refreshSession,
   logout,
   listSessions,
@@ -40,6 +41,7 @@ export {
 } from './modules/identity/application/sessions.js';
 export { verifyChallenge } from './modules/identity/infra/jwt.js';
 
+export { loadVisibleConversation } from './modules/conversations/application/access.js';
 export { assertCan, assertCanGrant, type Actor } from './modules/authz/application/actor.js';
 export {
   listRoles,

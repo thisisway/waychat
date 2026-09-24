@@ -101,38 +101,55 @@ export async function loadPermissions(
   return new Set(rows.map((r) => r.permission as Permission));
 }
 
-/** Valida o access token, confirma que a família de sessão continua ativa e carrega as permissões atuais. */
-export async function authenticate(ctx: Ctx, accessToken: string): Promise<AuthenticatedActor> {
-  const claims = await verifyAccessToken(ctx, accessToken);
-  const now = ctx.now();
+/**
+ * Estado atual de uma sessão: a família de refresh precisa estar ativa e o usuário ainda ser membro da conta.
+ * Devolve `null` se não estiver. NÃO olha a validade do access token: serve a conexões longas (WebSocket), que
+ * sobrevivem ao access token de 10 min enquanto a sessão (o refresh) continuar válida.
+ */
+export async function actorForSession(
+  ctx: Ctx,
+  s: { userId: string; accountId: string; familyId: string; mfaVerified: boolean },
+): Promise<AuthenticatedActor | null> {
   const active = await ctx.db
     .select({ id: sessions.id })
     .from(sessions)
     .innerJoin(users, eq(users.id, sessions.userId))
     .where(
       and(
-        eq(sessions.familyId, claims.fam),
-        eq(sessions.userId, claims.sub),
-        eq(sessions.accountId, claims.acc),
+        eq(sessions.familyId, s.familyId),
+        eq(sessions.userId, s.userId),
+        eq(sessions.accountId, s.accountId),
         isNull(sessions.revokedAt),
-        gt(sessions.expiresAt, now),
+        gt(sessions.expiresAt, ctx.now()),
         isNull(users.disabledAt),
       ),
     )
     .limit(1);
-  if (!active[0]) throw new DomainError('invalid_token');
-
-  const permissions = await withTenant(ctx.db, claims.acc, (tx) =>
-    loadPermissions(tx, claims.acc, claims.sub),
+  if (!active[0]) return null;
+  const permissions = await withTenant(ctx.db, s.accountId, (tx) =>
+    loadPermissions(tx, s.accountId, s.userId),
   );
-  if (!permissions) throw new DomainError('invalid_token'); // removido da conta depois do login
+  if (!permissions) return null; // removido da conta depois do login
   return {
+    userId: s.userId,
+    accountId: s.accountId,
+    familyId: s.familyId,
+    mfaVerified: s.mfaVerified,
+    permissions,
+  };
+}
+
+/** Valida o access token, confirma que a família de sessão continua ativa e carrega as permissões atuais. */
+export async function authenticate(ctx: Ctx, accessToken: string): Promise<AuthenticatedActor> {
+  const claims = await verifyAccessToken(ctx, accessToken);
+  const actor = await actorForSession(ctx, {
     userId: claims.sub,
     accountId: claims.acc,
     familyId: claims.fam,
     mfaVerified: claims.mfa,
-    permissions,
-  };
+  });
+  if (!actor) throw new DomainError('invalid_token');
+  return actor;
 }
 
 async function revokeFamily(ctx: Ctx, familyId: string, reason: string): Promise<void> {

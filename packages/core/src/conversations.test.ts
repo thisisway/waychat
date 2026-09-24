@@ -724,11 +724,11 @@ describe('GET /sync: eventos por cursor, filtrados pela visibilidade', () => {
   it('escritores concorrentes + leitor: a soma do que foi lido é exatamente o que foi gravado', async () => {
     const { accountId, owner, in1 } = await setup();
     const start = await currentCursor(ctx, owner);
-    let writing = true;
+    const state = { writing: true };
     const seen = new Map<string, number>();
     let cursor = start;
     const reader = (async () => {
-      while (writing) {
+      while (state.writing) {
         const r = await listEventsSince(ctx, owner, cursor, 50);
         for (const e of r.events) seen.set(e.event_id, e.cursor);
         cursor = r.cursor;
@@ -743,7 +743,7 @@ describe('GET /sync: eventos por cursor, filtrados pela visibilidade', () => {
         })(),
       ),
     );
-    writing = false;
+    state.writing = false;
     await reader;
     for (;;) {
       const r = await listEventsSince(ctx, owner, cursor, 500);

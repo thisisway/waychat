@@ -1,5 +1,6 @@
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { del, get, patch, post } from './api.js';
+import { realtimeOnline } from './realtime.js';
 import type {
   CannedResponse,
   ConversationDetail,
@@ -12,9 +13,10 @@ import type {
   Message,
 } from './types.js';
 
-/** Enquanto o WebSocket não existe (passo 5), o painel consulta a API em intervalos curtos. */
-const POLL_LIST = 4000;
-const POLL_MESSAGES = 3000;
+/** Com o WebSocket no ar as consultas só revalidam a cada minuto (rede de segurança); sem ele, a cada poucos segundos. */
+const POLL_OFFLINE = 4000;
+const POLL_SAFETY_NET = 60_000;
+const poll = () => (realtimeOnline() ? POLL_SAFETY_NET : POLL_OFFLINE);
 
 export const useMe = () =>
   useQuery({
@@ -44,7 +46,7 @@ export const useConversations = (f: ListFilters) =>
   useQuery({
     queryKey: ['conversations', f],
     queryFn: () => get<{ items: ConversationSummary[]; nextCursor: string | null }>(listUrl(f)),
-    refetchInterval: POLL_LIST,
+    refetchInterval: poll,
     placeholderData: keepPreviousData,
   });
 
@@ -52,7 +54,7 @@ export const useCounts = () =>
   useQuery({
     queryKey: ['counts'],
     queryFn: () => get<Counts>('/conversations/counts'),
-    refetchInterval: POLL_LIST,
+    refetchInterval: poll,
   });
 
 export const useConversation = (id: string | undefined) =>
@@ -60,7 +62,7 @@ export const useConversation = (id: string | undefined) =>
     queryKey: ['conversation', id],
     queryFn: () => get<ConversationDetail>(`/conversations/${id ?? ''}`),
     enabled: !!id,
-    refetchInterval: POLL_MESSAGES,
+    refetchInterval: poll,
     retry: false,
   });
 
@@ -72,7 +74,7 @@ export const useMessages = (id: string | undefined) =>
         `/conversations/${id ?? ''}/messages?limit=100`,
       ),
     enabled: !!id,
-    refetchInterval: POLL_MESSAGES,
+    refetchInterval: poll,
     retry: false,
   });
 

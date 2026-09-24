@@ -33,6 +33,12 @@ import {
 } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { ApiError, post } from '../api.js';
+import {
+  makeTypingNotifier,
+  startRealtime,
+  useConversationPresence,
+  useRealtimeStatus,
+} from '../realtime.js';
 import { fullDate, messageTime, shortTime, STATUS_LABEL, STATUS_TONE } from '../format.js';
 import {
   useCanned,
@@ -60,6 +66,15 @@ export function ConversationsPage() {
   const search = useSearch({ from: '/' });
   const nav = useNavigate();
   const qc = useQueryClient();
+  const loggedIn = me.isSuccess;
+
+  useEffect(() => {
+    if (!loggedIn) return;
+    return startRealtime(qc, () => {
+      qc.clear();
+      void nav({ to: '/login' });
+    });
+  }, [loggedIn, qc, nav]);
 
   if (me.isPending)
     return (
@@ -121,6 +136,7 @@ function TopBar({ me, onLogout }: { me: Me; onLogout: () => void }) {
   return (
     <header className="flex h-16 shrink-0 items-center gap-4 bg-surface px-4 lg:h-20 lg:px-8">
       <span className="text-title font-semibold text-fg">WayChat</span>
+      <ConnectionBadge />
       <nav aria-label="Principal" className="ml-2 flex flex-1 lg:ml-8">
         <TopNavTab icon={MessageSquare} active>
           Conversas
@@ -143,6 +159,33 @@ function TopBar({ me, onLogout }: { me: Me; onLogout: () => void }) {
       </div>
       <IconButton label="Sair" icon={<LogOut />} onClick={onLogout} />
     </header>
+  );
+}
+
+/** Só aparece quando a conexão em tempo real cai por mais de 3 s (evita piscar em quedas curtas). */
+function ConnectionBadge() {
+  const status = useRealtimeStatus();
+  const [late, setLate] = useState(false);
+  useEffect(() => {
+    if (status === 'online') {
+      setLate(false);
+      return;
+    }
+    const t = setTimeout(() => {
+      setLate(true);
+    }, 3000);
+    return () => {
+      clearTimeout(t);
+    };
+  }, [status]);
+  if (status === 'online' || !late) return null;
+  return (
+    <span
+      role="status"
+      className="hidden rounded-full bg-warning-bg px-3 py-1 text-caption font-medium text-warning-text sm:inline"
+    >
+      Reconectando…
+    </span>
   );
 }
 
@@ -304,6 +347,8 @@ function ConversationView({ id, me, onBack }: { id: string; me: Me; onBack: () =
   const update = useUpdateConversation(id);
   const send = useSendMessage(id, me);
   const endRef = useRef<HTMLDivElement>(null);
+  const presence = useConversationPresence(id);
+  const notifyTyping = useMemo(() => makeTypingNotifier(id), [id]);
 
   const ordered = useMemo(() => [...(messages.data?.items ?? [])].reverse(), [messages.data]);
   const unread = conv.data?.unreadCount ?? 0;
@@ -354,6 +399,18 @@ function ConversationView({ id, me, onBack }: { id: string; me: Me; onBack: () =
           </div>
         </div>
         <div className="mx-auto w-full max-w-3xl px-4 pb-4 lg:px-8">
+          {presence.typing ? (
+            <p role="status" className="mb-2 text-meta text-fg-secondary">
+              Outro atendente está digitando…
+            </p>
+          ) : presence.others > 0 ? (
+            <p role="status" className="mb-2 text-meta text-fg-secondary">
+              {presence.others === 1
+                ? 'Outro atendente está'
+                : `${String(presence.others)} atendentes estão`}{' '}
+              nesta conversa.
+            </p>
+          ) : null}
           {send.isError ? (
             <p role="alert" className="mb-2 text-meta text-danger-text">
               {send.error instanceof ApiError ? send.error.message : 'Não foi possível enviar.'}
@@ -362,6 +419,7 @@ function ConversationView({ id, me, onBack }: { id: string; me: Me; onBack: () =
           <Composer
             canned={canned.data?.items ?? []}
             {...(c ? { channelLabel: c.inbox.name } : {})}
+            onTyping={notifyTyping}
             disabled={!c}
             onSend={async (text, mode) => {
               try {

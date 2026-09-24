@@ -15,6 +15,7 @@ import type { Redis } from 'ioredis';
 import type { Registry } from 'prom-client';
 import { registerHttpMetrics } from './metrics.js';
 import { registerAccessControl } from './plugins/access.js';
+import { attachRealtime, type EventFeed, type Realtime } from './realtime.js';
 import { registerErrorHandling } from './plugins/errors.js';
 import { adminRoutes } from './routes/admin.js';
 import { contactRoutes } from './routes/contacts.js';
@@ -32,12 +33,15 @@ export interface AppDeps {
   redis?: Redis | null;
   /** Registro Prometheus; sem ele, nenhuma métrica HTTP é coletada. */
   metrics?: Registry;
+  /** Gateway WebSocket: precisa de uma fonte de eventos (Valkey em produção). Sem ela, não há tempo real. */
+  realtime?: { feed: EventFeed; revalidateEveryMs?: number };
   /** `false` silencia os logs (testes). */
   logger?: boolean;
 }
 
 export interface BuiltApp {
   app: FastifyInstance;
+  realtime: Realtime | null;
   /** Todas as rotas registradas e a forma de acesso de cada uma. */
   routeAccess: Map<string, Access>;
 }
@@ -113,5 +117,23 @@ export async function buildApp(deps: AppDeps): Promise<BuiltApp> {
     done(null, payload);
   });
 
-  return { app, routeAccess };
+  let realtime: Realtime | null = null;
+  if (deps.realtime) {
+    realtime = await attachRealtime({
+      httpServer: app.server,
+      env,
+      ctx,
+      feed: deps.realtime.feed,
+      redis: deps.redis ?? null,
+      ...(deps.realtime.revalidateEveryMs
+        ? { revalidateEveryMs: deps.realtime.revalidateEveryMs }
+        : {}),
+      ...(deps.metrics ? { metrics: deps.metrics } : {}),
+    });
+    const rt = realtime;
+    app.addHook('onClose', async () => {
+      await rt.close();
+    });
+  }
+  return { app, routeAccess, realtime };
 }

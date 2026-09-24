@@ -22,7 +22,7 @@ let refreshing: Promise<boolean> | null = null;
  * tempo compartilham UMA renovação. O servidor trata duas rotações simultâneas do mesmo token como reuso e derruba
  * a sessão inteira, então nunca pode haver duas em paralelo.
  */
-function refreshSession(): Promise<boolean> {
+export function refreshSession(): Promise<boolean> {
   refreshing ??= fetch('/auth/refresh', {
     method: 'POST',
     credentials: 'include',

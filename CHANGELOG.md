@@ -4,6 +4,13 @@ Formato baseado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/).
 
 ## [Não lançado]
 
+### Fase 1 — Núcleo de conversas (em andamento)
+
+**Adicionado**
+
+- Tempo real: Socket.IO autenticado pela sessão do painel, com checagem de `Origin`, limite de conexões, presença ("outro atendente está nesta conversa") e indicador de digitação; painel reconecta sozinho e recupera o que perdeu por `GET /sync` (ADR 0007).
+- `GET /sync`: eventos desde um cursor, com a mesma regra de visibilidade do WebSocket.
+
 ### Fase 0 — Fundação
 
 **Adicionado**

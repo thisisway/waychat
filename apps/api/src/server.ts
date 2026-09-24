@@ -3,6 +3,7 @@ import { createDb } from '@waychat/db';
 import { createRegistry, loadEnv, startMetricsServer } from '@waychat/shared';
 import { Redis } from 'ioredis';
 import { buildApp } from './app.js';
+import { createRedisFeed } from './realtime.js';
 import { telemetry } from './instrumentation.js';
 
 const env = loadEnv();
@@ -12,7 +13,13 @@ const ctx = createCtx(dbHandle.db, coreConfigFromEnv(env));
 
 const registry = createRegistry('api');
 const metricsServer = startMetricsServer(registry, env.METRICS_PORT, env.METRICS_HOST);
-const { app } = await buildApp({ env, ctx, redis, metrics: registry });
+const { app } = await buildApp({
+  env,
+  ctx,
+  redis,
+  metrics: registry,
+  realtime: { feed: createRedisFeed(redis) },
+});
 
 // Graceful shutdown: para de aceitar conexões, termina as requisições em andamento e só então fecha as dependências.
 let closing = false;
