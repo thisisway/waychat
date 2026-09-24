@@ -85,6 +85,13 @@
       "when": 1790254486755,
       "tag": "0011_attachments_rls",
       "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1790256809373,
+      "tag": "0012_outbox_notify",
+      "breakpoints": true
     }
   ]
 }

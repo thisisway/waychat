@@ -59,10 +59,13 @@ export async function relayOnce({ db, publish, batchSize = 100 }: RelayOptions):
 export interface RelayLoop {
   /** Para de buscar novos lotes e espera o lote em andamento terminar. */
   stop: () => Promise<void>;
+  /** Acorda o laço agora (chegou um evento). Se um ciclo está em andamento, o próximo começa sem pausa. */
+  nudge: () => void;
 }
 
 /**
- * Laço de polling. Com lote cheio, continua sem pausa (escoando backlog); com lote parcial ou vazio, espera `intervalMs`.
+ * Laço de polling. Com lote cheio, continua sem pausa (escoando backlog); com lote parcial ou vazio, espera `intervalMs`
+ * ou um `nudge()` (o NOTIFY do banco), o que vier primeiro: latência de milissegundos, com o polling de rede de segurança.
  * Erros (banco, Valkey fora do ar) não derrubam o processo: espera com backoff exponencial + jitter e tenta de novo.
  */
 export function startRelay(
@@ -73,8 +76,9 @@ export function startRelay(
   },
 ): RelayLoop {
   const batch = opts.batchSize ?? 100;
-  const interval = opts.intervalMs ?? 500;
+  const interval = opts.intervalMs ?? 2000;
   let stopping = false as boolean; // lido no laço, escrito por stop()
+  let nudged = false as boolean; // lido no laço, escrito por nudge()
   let failures = 0;
   let wake: (() => void) | undefined;
   const sleep = (ms: number) =>
@@ -92,7 +96,8 @@ export function startRelay(
         const n = await relayOnce(opts);
         failures = 0;
         if (n > 0) opts.onPublished?.(n);
-        if (n < batch) await sleep(interval);
+        if (n < batch && !nudged) await sleep(interval);
+        nudged = false;
       } catch (err) {
         failures++;
         opts.onError?.(err);
@@ -106,6 +111,10 @@ export function startRelay(
       stopping = true;
       wake?.();
       await done;
+    },
+    nudge: () => {
+      nudged = true;
+      wake?.();
     },
   };
 }

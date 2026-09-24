@@ -12,6 +12,7 @@ import {
   createPublisher,
   startEventsWorker,
 } from './queues.js';
+import { listenOutbox } from './notify.js';
 import { startRelay } from './relay.js';
 
 const env = loadEnv();
@@ -44,6 +45,17 @@ const relay = startRelay({
     log.error({ err }, 'falha no relay do outbox; nova tentativa com backoff');
   },
 });
+
+// Acorda o relay no COMMIT de cada evento novo (NOTIFY); o polling continua como rede de segurança.
+const stopListening = listenOutbox(
+  env.DATABASE_RELAY_URL,
+  () => {
+    relay.nudge();
+  },
+  (err) => {
+    log.warn({ err }, 'escuta do NOTIFY do outbox falhou; o polling cobre até reconectar');
+  },
+);
 
 // Varredura de anexos: baixa do S3, passa pelo clamd e libera (ou apaga) o arquivo. Usa a role da aplicação (RLS).
 const appDb = createDb(env.DATABASE_URL, { max: 4 });
@@ -86,6 +98,7 @@ async function shutdown(signal: string): Promise<void> {
   }, 30_000);
   timer.unref();
   try {
+    await stopListening();
     await relay.stop();
     await worker.close();
     await scanWorker.close();
