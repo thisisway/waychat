@@ -136,20 +136,37 @@ describe('cursor de eventos por conta, sem lacunas (ADR 0006)', () => {
     const acc = uuidv7();
     await t.owner.db.insert(accounts).values({ id: acc, name: 'E', slug: `e-${acc.slice(-6)}` });
     const commits: string[] = [];
+    // Sincronização por sinais (nada de "dorme X ms e torce"): a rápida só começa depois que a lenta já numerou,
+    // e a lenta só confirma depois de a rápida ter sido disparada e ter tido tempo de bater no lock do contador.
+    let slowHasSeq!: () => void;
+    const slowInserted = new Promise<void>((r) => (slowHasSeq = r));
+    let fastStarted!: () => void;
+    const fastLaunched = new Promise<void>((r) => (fastStarted = r));
+
     const slow = withTenant(pool.db, acc, async (tx) => {
-      await tx.insert(outbox).values(event(acc)); // pega o número 1 e segura o lock do contador
-      await sleep(400);
+      await tx.insert(outbox).values(event(acc)); // número 1: segura o lock do contador
+      slowHasSeq();
+      await fastLaunched;
+      await sleep(300); // dá tempo de a rápida chegar ao lock
     }).then(() => commits.push('lenta'));
-    await sleep(80);
+
+    await slowInserted;
+    fastStarted();
     const start = Date.now();
-    const fast = withTenant(pool.db, acc, (tx) => tx.insert(outbox).values(event(acc))).then(() => {
+    const waited = await withTenant(pool.db, acc, (tx) =>
+      tx.insert(outbox).values(event(acc)),
+    ).then(() => {
       commits.push('rapida');
       return Date.now() - start;
     });
-    const waited = await fast;
     await slow;
     expect(commits).toEqual(['lenta', 'rapida']);
-    expect(waited).toBeGreaterThan(250); // ficou bloqueada até a lenta confirmar
+    expect(waited).toBeGreaterThan(150); // ficou bloqueada até a lenta confirmar
+    const rows = await t.owner.pool.query(
+      'select account_seq from outbox where account_id = $1 order by account_seq',
+      [acc],
+    );
+    expect(rows.rows.map((r) => Number(r.account_seq))).toEqual([1, 2]);
   });
 
   it('contas diferentes não se bloqueiam nem se misturam', async () => {
@@ -159,14 +176,26 @@ describe('cursor de eventos por conta, sem lacunas (ADR 0006)', () => {
       { id: a, name: 'F', slug: `f-${a.slice(-6)}` },
       { id: b, name: 'G', slug: `g-${b.slice(-6)}` },
     ]);
+    // Se B dependesse do lock de A, os dois esperariam um pelo outro: A só confirma DEPOIS de B terminar.
+    // Um deadlock aparece como timeout (5 s), sem depender de milissegundos.
+    let aHasSeq!: () => void;
+    const aInserted = new Promise<void>((r) => (aHasSeq = r));
+    let bFinished!: () => void;
+    const bDone = new Promise<void>((r) => (bFinished = r));
+    const guard = <T>(p: Promise<T>) =>
+      Promise.race([
+        p,
+        sleep(5000).then(() => Promise.reject(new Error('deadlock entre contas diferentes'))),
+      ]);
+
     const held = withTenant(pool.db, a, async (tx) => {
       await tx.insert(outbox).values(event(a));
-      await sleep(400);
+      aHasSeq();
+      await guard(bDone);
     });
-    await sleep(80);
-    const start = Date.now();
-    await withTenant(pool.db, b, (tx) => tx.insert(outbox).values(event(b)));
-    expect(Date.now() - start).toBeLessThan(300); // a conta B não esperou a A
+    await aInserted;
+    await guard(withTenant(pool.db, b, (tx) => tx.insert(outbox).values(event(b))));
+    bFinished();
     await held;
     const rows = await t.owner.pool.query(
       'select account_id, account_seq from outbox where account_id = any($1)',
