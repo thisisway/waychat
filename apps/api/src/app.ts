@@ -24,6 +24,7 @@ import { inboxRoutes } from './routes/inboxes.js';
 import { attachmentRoutes } from './routes/attachments.js';
 import { channelApiRoutes } from './routes/channel-api.js';
 import { syncRoutes } from './routes/sync.js';
+import { webhookRoutes } from './routes/webhooks.js';
 import { whatsappRoutes } from './routes/whatsapp.js';
 import { widgetRoutes } from './routes/widget.js';
 import { authRoutes } from './routes/auth.js';
@@ -133,6 +134,7 @@ export async function buildApp(deps: AppDeps): Promise<BuiltApp> {
   widgetRoutes(app, ctx);
   attachmentRoutes(app, ctx);
   whatsappRoutes(app, ctx);
+  webhookRoutes(app, ctx);
   app.get('/openapi.json', { config: access.public }, () => app.swagger());
 
   // requestId também no header de resposta para correlação com os logs

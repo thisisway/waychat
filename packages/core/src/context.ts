@@ -1,5 +1,6 @@
 import type { Db } from '@waychat/db';
 import type { Env } from '@waychat/shared';
+import type { InboundJob } from '@waychat/channels';
 import type { ObjectStore, Scanner } from '@waychat/storage';
 import { Keyring } from './crypto/envelope.js';
 
@@ -22,6 +23,11 @@ export interface FileServices {
   enqueueScan: (accountId: string, attachmentId: string) => Promise<void>;
 }
 
+/** Canais externos (WhatsApp): enfileira o processamento de um webhook já gravado. */
+export interface ChannelServices {
+  enqueueInbound: (job: InboundJob) => Promise<void>;
+}
+
 export interface Ctx {
   db: Db;
   config: CoreConfig;
@@ -29,6 +35,7 @@ export interface Ctx {
   /** Relógio injetável (testes de bloqueio, expiração e TOTP). */
   now: () => Date;
   files?: FileServices;
+  channels?: ChannelServices;
 }
 
 export function coreConfigFromEnv(
@@ -50,6 +57,7 @@ export function createCtx(
   config: CoreConfig,
   now: () => Date = () => new Date(),
   files?: FileServices,
+  channels?: ChannelServices,
 ): Ctx {
   return {
     db,
@@ -57,5 +65,6 @@ export function createCtx(
     keyring: new Keyring(config.masterKey, config.masterKeyPrevious),
     now,
     ...(files ? { files } : {}),
+    ...(channels ? { channels } : {}),
   };
 }

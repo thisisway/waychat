@@ -34,5 +34,7 @@ declare module 'fastify' {
     actor?: AuthenticatedActor;
     apiKey?: ApiKeyPrincipal;
     visitor?: Visitor;
+    /** Corpo bruto de webhooks (a assinatura é calculada sobre os bytes originais). */
+    rawBody?: Buffer;
   }
 }

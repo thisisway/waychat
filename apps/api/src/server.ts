@@ -1,6 +1,7 @@
 import { coreConfigFromEnv, createCtx, fileServicesFromEnv } from '@waychat/core';
 import { createDb } from '@waychat/db';
 import { createRegistry, loadEnv, startMetricsServer } from '@waychat/shared';
+import { createInboundQueue, enqueueInbound } from '@waychat/channels';
 import { createScanQueue, enqueueScan } from '@waychat/storage';
 import { Redis } from 'ioredis';
 import { buildApp } from './app.js';
@@ -15,7 +16,10 @@ const scanQueue = createScanQueue(redis.duplicate({ maxRetriesPerRequest: null }
 const files = fileServicesFromEnv(env, (accountId, id) => enqueueScan(scanQueue, accountId, id));
 if (env.NODE_ENV !== 'production') await files.store.ensureBucket?.();
 if (!files.scanner) console.warn('CLAMAV_HOST vazio: anexos SEM varredura (só desenvolvimento)');
-const ctx = createCtx(dbHandle.db, coreConfigFromEnv(env), undefined, files);
+const inboundQueue = createInboundQueue(redis.duplicate({ maxRetriesPerRequest: null }));
+const ctx = createCtx(dbHandle.db, coreConfigFromEnv(env), undefined, files, {
+  enqueueInbound: (job) => enqueueInbound(inboundQueue, job),
+});
 
 const registry = createRegistry('api');
 const metricsServer = startMetricsServer(registry, env.METRICS_PORT, env.METRICS_HOST);
@@ -41,6 +45,7 @@ async function shutdown(signal: string): Promise<void> {
   try {
     await app.close();
     await scanQueue.close();
+    await inboundQueue.close();
     metricsServer.close();
     await dbHandle.close();
     await telemetry.shutdown();

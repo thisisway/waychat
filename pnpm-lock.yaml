@@ -53,6 +53,12 @@ importers:
       '@socket.io/redis-adapter':
         specifier: ^8.3.0
         version: 8.3.0(socket.io-adapter@2.5.8)
+      '@waychat/channels':
+        specifier: workspace:*
+        version: link:../../packages/channels/core
+      '@waychat/channels-whatsapp':
+        specifier: workspace:*
+        version: link:../../packages/channels/whatsapp-cloud
       '@waychat/core':
         specifier: workspace:*
         version: link:../../packages/core
@@ -232,7 +238,11 @@ importers:
         specifier: ^12.1.0
         version: 12.1.0
 
-  packages/channels/core: {}
+  packages/channels/core:
+    dependencies:
+      bullmq:
+        specifier: ^6.3.8
+        version: 6.3.8(ioredis@6.0.0)(pg@8.23.0)
 
   packages/channels/whatsapp-cloud:
     dependencies:
@@ -251,6 +261,9 @@ importers:
       '@opentelemetry/api':
         specifier: ^1.9.1
         version: 1.9.1
+      '@waychat/channels':
+        specifier: workspace:*
+        version: link:../channels/core
       '@waychat/db':
         specifier: workspace:*
         version: link:../db

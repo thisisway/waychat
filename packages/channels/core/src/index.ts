@@ -201,3 +201,11 @@ export interface ChannelAdapter {
   capabilities(): ChannelCapabilities;
   classifyError(err: unknown): ClassifiedError;
 }
+
+export {
+  createInboundQueue,
+  enqueueInbound,
+  INBOUND_QUEUE,
+  startInboundWorker,
+  type InboundJob,
+} from './queue.js';

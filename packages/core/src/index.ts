@@ -191,3 +191,9 @@ export {
   type WhatsAppConnectionView,
   type WhatsAppTarget,
 } from './modules/inbox/application/whatsapp.js';
+export {
+  acceptWhatsAppEvents,
+  externalIdOf,
+  type WebhookIntake,
+} from './modules/channels/application/webhook.js';
+export type { ChannelServices } from './context.js';

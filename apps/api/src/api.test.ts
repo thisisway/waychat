@@ -1,4 +1,4 @@
-import { randomBytes } from 'node:crypto';
+import { createHmac, randomBytes } from 'node:crypto';
 import { createCtx, receiveInboundMessage, scanAttachment, type Ctx } from '@waychat/core';
 import { startTestDb, type TestDb } from '@waychat/db/testing';
 import { loadEnv } from '@waychat/shared';
@@ -15,6 +15,7 @@ let app: FastifyInstance;
 let routeAccess: Map<string, Access>;
 let coreCtx: Ctx;
 const fileServices = testFiles();
+const channelStub = { jobs: [] as { eventId: string }[], fail: false };
 const registry = new Registry();
 let clock = Date.UTC(2026, 0, 15, 12, 0, 0);
 const step = (s: number) => (clock += s * 1000);
@@ -106,6 +107,13 @@ beforeAll(async () => {
     },
     () => new Date(clock),
     fileServices.files,
+    {
+      enqueueInbound: (job) => {
+        if (channelStub.fail) return Promise.reject(new Error('valkey fora do ar'));
+        channelStub.jobs.push(job);
+        return Promise.resolve();
+      },
+    },
   );
   const built = await buildApp({ env, ctx: coreCtx, logger: false, metrics: registry });
   app = built.app;
@@ -131,6 +139,8 @@ describe('autorização deny-by-default', () => {
         'GET /health/live',
         'GET /health/ready',
         'GET /openapi.json',
+        'GET /webhooks/whatsapp/:key',
+        'POST /webhooks/whatsapp/:key',
         'POST /widget/v1/session',
         'POST /auth/login',
         'POST /auth/mfa/enroll/begin',
@@ -1231,5 +1241,202 @@ describe('conexão do WhatsApp', () => {
       await call(owner, 'POST', '/inboxes', { name: 'Site', channel_type: 'widget' })
     ).json().inbox.id as string;
     expect((await call(owner, 'GET', `/inboxes/${widget}/whatsapp`)).statusCode).toBe(404);
+  });
+});
+
+describe('webhook do WhatsApp', () => {
+  const APP_SECRET = 'segredo-do-app-da-meta-0123456789';
+  const PHONE = '106540352242922';
+  const WABA = '102290129340398';
+
+  const text = (id: string, phone = PHONE) => ({
+    object: 'whatsapp_business_account',
+    entry: [
+      {
+        id: WABA,
+        changes: [
+          {
+            field: 'messages',
+            value: {
+              messaging_product: 'whatsapp',
+              metadata: { display_phone_number: '5511999990000', phone_number_id: phone },
+              contacts: [{ profile: { name: 'Maria' }, wa_id: '5511988887777' }],
+              messages: [
+                {
+                  from: '5511988887777',
+                  id,
+                  timestamp: '1758700000',
+                  type: 'text',
+                  text: { body: 'Olá' },
+                },
+              ],
+            } as Record<string, unknown> & { messages: Record<string, unknown>[] },
+          },
+        ],
+      },
+    ],
+  });
+
+  async function canal() {
+    const { s: owner } = await register();
+    const res = await call(owner, 'POST', '/inboxes/whatsapp', {
+      name: 'WhatsApp',
+      phone_number_id: PHONE,
+      waba_id: WABA,
+      access_token: 'EAAGtokenDeAcessoDeTesteDeTesteDeTeste',
+      app_secret: APP_SECRET,
+    });
+    const { inbox, connection } = res.json();
+    return {
+      owner,
+      inboxId: inbox.id as string,
+      key: inbox.publicKey as string,
+      verifyToken: connection.verifyToken as string,
+    };
+  }
+
+  const sign = (raw: string, secret = APP_SECRET) =>
+    `sha256=${createHmac('sha256', secret).update(raw).digest('hex')}`;
+  const post = (
+    key: string,
+    payload: unknown,
+    opts: { signature?: string | null; raw?: string } = {},
+  ) => {
+    const raw = opts.raw ?? JSON.stringify(payload);
+    return app.inject({
+      method: 'POST',
+      url: `/webhooks/whatsapp/${key}`,
+      remoteAddress: ip(),
+      headers: {
+        'content-type': 'application/json',
+        ...(opts.signature === null ? {} : { 'x-hub-signature-256': opts.signature ?? sign(raw) }),
+      },
+      payload: raw,
+    });
+  };
+  const rows = async (inboxId: string) =>
+    (
+      await t.owner.pool.query(
+        'select external_id, status from inbound_events where inbox_id = $1 order by created_at, external_id',
+        [inboxId],
+      )
+    ).rows as { external_id: string; status: string }[];
+
+  it('GET: devolve o challenge só com o verify token da caixa; mesma recusa para chave inexistente', async () => {
+    const c = await canal();
+    const q = (key: string, token: string) =>
+      app.inject({
+        method: 'GET',
+        url: `/webhooks/whatsapp/${key}?hub.mode=subscribe&hub.verify_token=${token}&hub.challenge=1158201444`,
+        remoteAddress: ip(),
+      });
+    const ok = await q(c.key, c.verifyToken);
+    expect(ok.statusCode).toBe(200);
+    expect(ok.body).toBe('1158201444');
+    expect(ok.headers['content-type']).toContain('text/plain');
+    expect((await q(c.key, 'errado')).statusCode).toBe(403);
+    expect((await q('ibx_inexistente', c.verifyToken)).statusCode).toBe(403);
+  });
+
+  it('POST assinado grava o evento e enfileira; webhook duplicado não cria outro', async () => {
+    const c = await canal();
+    channelStub.jobs.length = 0;
+    const payload = text('wamid.DUP1');
+    expect((await post(c.key, payload)).statusCode).toBe(200);
+    expect(await rows(c.inboxId)).toEqual([{ external_id: 'msg:wamid.DUP1', status: 'received' }]);
+    expect(channelStub.jobs).toHaveLength(1);
+    // a Meta reenvia exatamente o mesmo webhook
+    expect((await post(c.key, payload)).statusCode).toBe(200);
+    expect(await rows(c.inboxId)).toHaveLength(1);
+    // reenfileira o MESMO evento (jobId fixo na fila real impede job duplicado)
+    expect(new Set(channelStub.jobs.map((j) => j.eventId)).size).toBe(1);
+  });
+
+  it('assinatura ausente, errada ou de corpo adulterado: 401 e nada é gravado', async () => {
+    const c = await canal();
+    const payload = text('wamid.SIG1');
+    const raw = JSON.stringify(payload);
+    expect((await post(c.key, payload, { signature: null })).statusCode).toBe(401);
+    expect((await post(c.key, payload, { signature: sign(raw, 'outro-segredo') })).statusCode).toBe(
+      401,
+    );
+    expect((await post(c.key, payload, { signature: 'sha256=zzz' })).statusCode).toBe(401);
+    // assinatura do corpo original, corpo alterado depois
+    expect(
+      (await post(c.key, payload, { raw: raw.replace('Olá', 'Oi'), signature: sign(raw) }))
+        .statusCode,
+    ).toBe(401);
+    expect(await rows(c.inboxId)).toHaveLength(0);
+  });
+
+  it('chave desconhecida: 404; JSON inválido: 400; corpo enorme: 413', async () => {
+    const c = await canal();
+    expect((await post('ibx_inexistente', text('wamid.X'))).statusCode).toBe(404);
+    expect((await post(c.key, null, { raw: '{"object": ' })).statusCode).toBe(400);
+    const big = JSON.stringify({ x: 'a'.repeat(600 * 1024) });
+    expect((await post(c.key, null, { raw: big })).statusCode).toBe(413);
+    expect(await rows(c.inboxId)).toHaveLength(0);
+  });
+
+  it('assinado mas fora do formato da Meta: 400', async () => {
+    const c = await canal();
+    expect((await post(c.key, { entry: 'x' })).statusCode).toBe(400);
+  });
+
+  it('um POST com várias mensagens e status grava um evento para cada', async () => {
+    const c = await canal();
+    const body = text('wamid.B1');
+    const value = body.entry[0]?.changes[0]?.value;
+    if (!value) throw new Error('fixture');
+    value.messages.push({ ...value.messages[0], id: 'wamid.B2' });
+    value['statuses'] = [
+      {
+        id: 'wamid.OUT1',
+        status: 'delivered',
+        timestamp: '1758700001',
+        recipient_id: '5511988887777',
+      },
+      { id: 'wamid.OUT1', status: 'read', timestamp: '1758700002', recipient_id: '5511988887777' },
+    ];
+    expect((await post(c.key, body)).statusCode).toBe(200);
+    expect((await rows(c.inboxId)).map((r) => r.external_id).sort()).toEqual([
+      'msg:wamid.B1',
+      'msg:wamid.B2',
+      'st:wamid.OUT1:delivered',
+      'st:wamid.OUT1:read',
+    ]);
+  });
+
+  it('evento de outro número é descartado (uma caixa não recebe dados de outra conta da Meta)', async () => {
+    const c = await canal();
+    expect((await post(c.key, text('wamid.OUTRO', '999999999999'))).statusCode).toBe(200);
+    expect(await rows(c.inboxId)).toHaveLength(0);
+  });
+
+  it('caixa desativada aceita e descarta (recusar faria a Meta reenviar)', async () => {
+    const c = await canal();
+    await call(c.owner, 'PATCH', `/inboxes/${c.inboxId}`, { enabled: false });
+    expect((await post(c.key, text('wamid.OFF'))).statusCode).toBe(200);
+    expect(await rows(c.inboxId)).toHaveLength(0);
+  });
+
+  it('Valkey fora do ar: responde 500, a Meta reenvia e o evento gravado NÃO se perde', async () => {
+    const c = await canal();
+    channelStub.jobs.length = 0;
+    channelStub.fail = true;
+    const payload = text('wamid.RETRY1');
+    expect((await post(c.key, payload)).statusCode).toBe(500);
+    expect(await rows(c.inboxId)).toEqual([
+      { external_id: 'msg:wamid.RETRY1', status: 'received' },
+    ]);
+    channelStub.fail = false;
+    expect((await post(c.key, payload)).statusCode).toBe(200);
+    expect(channelStub.jobs).toHaveLength(1); // enfileirado agora, sem duplicar a linha
+    expect(await rows(c.inboxId)).toHaveLength(1);
+  });
+
+  it('as rotas do webhook são públicas de propósito (a autenticação é a assinatura)', () => {
+    expect(routeAccess.get('POST /webhooks/whatsapp/:key')?.kind).toBe('public');
+    expect(routeAccess.get('GET /webhooks/whatsapp/:key')?.kind).toBe('public');
   });
 });
