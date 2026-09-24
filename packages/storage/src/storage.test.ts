@@ -148,7 +148,7 @@ describe('S3 (MinIO)', () => {
   let store: ObjectStore;
 
   beforeAll(async () => {
-    const started = await new GenericContainer('minio/minio:latest')
+    const started = await new GenericContainer('pgsty/minio:RELEASE.2026-08-04T00-00-00Z')
       .withCommand(['server', '/data'])
       .withEnvironment({ MINIO_ROOT_USER: 'teste', MINIO_ROOT_PASSWORD: 'teste-senha-longa' })
       .withExposedPorts(9000)
