@@ -102,8 +102,8 @@ export function ConversationsPage() {
   };
 
   return (
-    <div className="h-full bg-app p-0 lg:p-6">
-      <div className="mx-auto flex h-full max-w-[1600px] flex-col overflow-hidden bg-shell lg:rounded-shell">
+    <div className="h-full bg-shell">
+      <div className="flex h-full flex-col overflow-hidden bg-shell">
         <TopBar me={user} onLogout={() => void logout()} />
         <div className="flex min-h-0 flex-1 gap-3 p-0 lg:p-3">
           <Sidebar
