@@ -4,7 +4,7 @@ import { forwardRef, type ButtonHTMLAttributes } from 'react';
 import { cn } from '../lib/cn.js';
 
 const button = cva(
-  'inline-flex items-center justify-center gap-2 rounded-control font-medium transition-colors duration-(--motion-fast) ease-out disabled:pointer-events-none disabled:opacity-50 h-10 px-4 text-body',
+  'inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-control font-medium transition-colors duration-(--motion-fast) ease-out disabled:pointer-events-none disabled:opacity-50 h-10 px-4 text-body',
   {
     variants: {
       variant: {

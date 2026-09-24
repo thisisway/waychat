@@ -8,7 +8,8 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "start": "node --import ./dist/instrumentation.js dist/server.js",
-    "openapi": "node dist/export-openapi.js"
+    "openapi": "node dist/export-openapi.js",
+    "seed:dev": "node --env-file=../../.env dist/dev-seed.js"
   },
   "dependencies": {
     "@fastify/cookie": "^11.1.2",

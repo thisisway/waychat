@@ -8,9 +8,12 @@ import {
   Badge,
   Button,
   Chip,
+  Composer,
+  ConversationListItem,
   IconButton,
   InfoCard,
   Input,
+  MessageBubble,
   NoteCard,
   Search,
   SidebarNavItem,
@@ -210,5 +213,102 @@ describe('tema', () => {
     vi.stubGlobal('matchMedia', () => ({ matches: true }));
     expect(resolveTheme()).toBe('dark');
     vi.unstubAllGlobals();
+  });
+});
+
+describe('componentes de conversa', () => {
+  it('MessageBubble: recebida mostra autor; enviada mostra origem e status; nota mostra o rótulo', () => {
+    const { rerender } = render(
+      <MessageBubble direction="in" author="Brandon" time="11:18">
+        Olá
+      </MessageBubble>,
+    );
+    expect(screen.getByText('Brandon')).toBeVisible();
+    rerender(
+      <MessageBubble direction="out" time="11:19" via="via Site" status="read">
+        Oi!
+      </MessageBubble>,
+    );
+    expect(screen.getByText('via Site')).toBeVisible();
+    expect(screen.getByText('Lida')).toBeInTheDocument(); // status também por texto, não só ícone
+    rerender(
+      <MessageBubble direction="out" time="11:20" note>
+        segredo
+      </MessageBubble>,
+    );
+    expect(screen.getByText('Nota interna')).toBeVisible();
+  });
+
+  it('ConversationListItem: mostra não lidas e marca a selecionada', () => {
+    const fn = vi.fn();
+    render(
+      <ConversationListItem
+        name="Loren Quigley"
+        preview="Awesome!"
+        time="11:29"
+        unread={2}
+        selected
+        onClick={fn}
+      />,
+    );
+    const b = screen.getByRole('button', { name: /Loren Quigley/ });
+    expect(b).toHaveAttribute('aria-current', 'true');
+    expect(screen.getByLabelText('2 não lidas')).toBeVisible();
+    fireEvent.click(b);
+    expect(fn).toHaveBeenCalledOnce();
+  });
+
+  it('Composer: Enter envia, Shift+Enter não; vazio não envia; nota interna muda o modo', async () => {
+    const onSend = vi.fn().mockResolvedValue(true);
+    render(<Composer onSend={onSend} />);
+    const box = screen.getByLabelText('Escrever mensagem');
+    fireEvent.keyDown(box, { key: 'Enter' });
+    expect(onSend).not.toHaveBeenCalled(); // vazio
+    fireEvent.change(box, { target: { value: 'oi' } });
+    fireEvent.keyDown(box, { key: 'Enter', shiftKey: true });
+    expect(onSend).not.toHaveBeenCalled();
+    fireEvent.keyDown(box, { key: 'Enter' });
+    await vi.waitFor(() => {
+      expect(onSend).toHaveBeenCalledWith('oi', 'reply');
+    });
+    await vi.waitFor(() => {
+      expect(box).toHaveValue('');
+    });
+    fireEvent.click(screen.getByRole('tab', { name: 'Nota interna' }));
+    const note = screen.getByLabelText('Escrever nota interna');
+    fireEvent.change(note, { target: { value: 'so equipe' } });
+    fireEvent.keyDown(note, { key: 'Enter' });
+    await vi.waitFor(() => {
+      expect(onSend).toHaveBeenLastCalledWith('so equipe', 'note');
+    });
+  });
+
+  it('Composer: se o envio falha o texto permanece; "/" sugere respostas prontas e Tab escolhe', async () => {
+    const failing = vi.fn().mockResolvedValue(false);
+    const { unmount } = render(<Composer onSend={failing} />);
+    const box = screen.getByLabelText('Escrever mensagem');
+    fireEvent.change(box, { target: { value: 'tentando' } });
+    fireEvent.keyDown(box, { key: 'Enter' });
+    await vi.waitFor(() => {
+      expect(failing).toHaveBeenCalled();
+    });
+    expect(box).toHaveValue('tentando');
+    unmount();
+
+    render(
+      <Composer
+        onSend={vi.fn()}
+        canned={[
+          { shortcut: 'ola', content: 'Olá! Como posso ajudar?' },
+          { shortcut: 'obrigado', content: 'Por nada!' },
+        ]}
+      />,
+    );
+    const b2 = screen.getByLabelText('Escrever mensagem');
+    fireEvent.change(b2, { target: { value: '/ol' } });
+    expect(screen.getByRole('listbox', { name: 'Respostas prontas' })).toBeVisible();
+    expect(screen.getAllByRole('option')).toHaveLength(1);
+    fireEvent.keyDown(b2, { key: 'Tab' });
+    expect(b2).toHaveValue('Olá! Como posso ajudar?');
   });
 });

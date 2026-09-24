@@ -11,4 +11,5 @@ regexes = [
   '''ignorada-pois-ja-existe''',
   '''senha-errada-[0-9a-z-]+''',
   '''errada-[0-9a-z-]+''',
+  '''waychat-teste-2026!''',
 ]

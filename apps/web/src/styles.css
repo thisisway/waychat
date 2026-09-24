@@ -1,0 +1,16 @@
+@import 'tailwindcss';
+@import '@waychat/ui/fonts.css';
+@import '@waychat/ui/tokens.css';
+@import '@waychat/ui/theme.css';
+/* O Tailwind v4 só varre os arquivos do app; os componentes ficam em outro pacote. */
+@source '../../../packages/ui/src';
+
+html,
+body,
+#root {
+  height: 100%;
+}
+body {
+  margin: 0;
+  -webkit-font-smoothing: antialiased;
+}

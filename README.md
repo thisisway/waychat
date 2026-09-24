@@ -8,6 +8,7 @@ Plataforma open source de atendimento omnichannel em tempo real, com foco em ent
 
 ```
 apps/api        Fastify: REST + (Fase 1) WebSocket
+apps/web        Painel do atendente (React + Vite + TanStack): login e tela de Conversas
 apps/worker     BullMQ: relay do outbox e filas
 packages/core   Casos de uso (identidade, RBAC, auditoria, eventos), sem framework HTTP
 packages/db     Schema Drizzle, migrações, RLS
@@ -33,6 +34,15 @@ node --env-file=.env packages/db/dist/migrate-cli.js                          # 
 node --env-file=.env --import ./apps/api/dist/instrumentation.js apps/api/dist/server.js
 node --env-file=.env --import ./apps/worker/dist/instrumentation.js apps/worker/dist/main.js
 ```
+
+### Ver o painel
+
+```bash
+node --env-file=.env apps/api/dist/dev-seed.js        # dados de demonstração (só em desenvolvimento local)
+pnpm --filter @waychat/web dev                         # painel em http://localhost:5173
+```
+
+Entre com `demo@waychat.dev` (dono) ou `ana@waychat.dev` (agente) e a senha `waychat-teste-2026!`. A senha é pública e fictícia; o comando se recusa a rodar em produção ou fora de localhost. O `PUBLIC_URL` do `.env` precisa ser `http://localhost:5173` (o Vite repassa as rotas da API, então cookies e CSRF funcionam como em produção). Enquanto o WebSocket não existe, o painel atualiza consultando a API a cada poucos segundos.
 
 As portas do host são `5462` (Postgres), `6409` (Valkey) e `9030/9031` (MinIO) para não colidir com outros projetos locais. A API escuta em `3000`; `/metrics` do Prometheus em `9464` (API) e `9465` (worker), nunca expostas pelo proxy.
 
