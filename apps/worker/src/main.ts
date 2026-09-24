@@ -1,5 +1,7 @@
+import { coreConfigFromEnv, createCtx, fileServicesFromEnv, scanAttachment } from '@waychat/core';
 import { createDb } from '@waychat/db';
 import { createLogger, createRegistry, loadEnv, startMetricsServer } from '@waychat/shared';
+import { startScanWorker } from '@waychat/storage';
 import { Redis } from 'ioredis';
 import { telemetry } from './instrumentation.js';
 import { registerWorkerMetrics } from './metrics.js';
@@ -43,6 +45,22 @@ const relay = startRelay({
   },
 });
 
+// Varredura de anexos: baixa do S3, passa pelo clamd e libera (ou apaga) o arquivo. Usa a role da aplicação (RLS).
+const appDb = createDb(env.DATABASE_URL, { max: 4 });
+const scanCtx = createCtx(
+  appDb.db,
+  coreConfigFromEnv(env),
+  undefined,
+  fileServicesFromEnv(env, () => Promise.resolve()), // o worker só consome a fila
+);
+const scanWorker = startScanWorker(
+  connection,
+  (job) => scanAttachment(scanCtx, job.accountId, job.attachmentId),
+  (err) => {
+    log.error({ err }, 'falha na varredura de anexo; nova tentativa com backoff');
+  },
+);
+
 // Fases seguintes registram aqui os handlers (automações, webhooks de saída, envio por canal...).
 const worker = startEventsWorker({
   connection,
@@ -70,6 +88,8 @@ async function shutdown(signal: string): Promise<void> {
   try {
     await relay.stop();
     await worker.close();
+    await scanWorker.close();
+    await appDb.close();
     await queue.close();
     await deadLetter.close();
     await relayDb.close();

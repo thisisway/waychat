@@ -200,27 +200,6 @@ export const messages = pgTable(
   ],
 );
 
-export const attachments = pgTable(
-  'attachments',
-  {
-    id: id(),
-    accountId: accountRef(),
-    /** Nulo enquanto o upload ainda não foi associado a uma mensagem. */
-    messageId: uuid('message_id').references(() => messages.id, { onDelete: 'cascade' }),
-    storageKey: text('storage_key').notNull().unique(),
-    fileName: text('file_name').notNull(),
-    /** Tipo detectado pelos magic bytes, nunca o declarado pelo cliente. */
-    contentType: text('content_type').notNull(),
-    size: bigint('size', { mode: 'number' }).notNull(),
-    scanStatus: text('scan_status').notNull().default('pending'),
-    createdAt: createdAt(),
-  },
-  (t) => [
-    index('attachments_message_idx').on(t.messageId),
-    check('attachments_scan_ck', sql`${t.scanStatus} in ('pending', 'clean', 'infected', 'error')`),
-  ],
-);
-
 export const labels = pgTable(
   'labels',
   {
@@ -276,4 +255,44 @@ export const conversationReads = pgTable(
     lastReadAt: tsz('last_read_at').notNull(),
   },
   (t) => [primaryKey({ columns: [t.conversationId, t.userId] })],
+);
+
+/**
+ * Arquivo enviado por atendente ou visitante. O objeto fica no S3 (`storage_key` é gerada no servidor);
+ * só sai para o outro lado depois de `clean` (assinatura conferida + antivírus).
+ * `awaiting_upload` → `scanning` → `clean` | `infected` | `rejected`.
+ */
+export const attachments = pgTable(
+  'attachments',
+  {
+    id: id(),
+    accountId: accountRef(),
+    inboxId: uuid('inbox_id')
+      .notNull()
+      .references(() => inboxes.id, { onDelete: 'cascade' }),
+    /** Quem enviou: `user` (uploaderId = users.id) ou `visitor` (uploaderId = identidade do contato no widget). */
+    uploaderType: text('uploader_type').notNull(),
+    uploaderId: text('uploader_id').notNull(),
+    /** Preenchido quando o anexo é enviado junto de uma mensagem. */
+    messageId: uuid('message_id').references(() => messages.id, { onDelete: 'cascade' }),
+    fileName: text('file_name').notNull(),
+    /** Tipo DETECTADO pelo conteúdo (nunca o declarado pelo cliente). Nulo até a conclusão do upload. */
+    contentType: text('content_type'),
+    sizeBytes: bigint('size_bytes', { mode: 'number' }).notNull(),
+    storageKey: text('storage_key').notNull().unique(),
+    status: text('status').notNull().default('awaiting_upload'),
+    rejectReason: text('reject_reason'),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [
+    index('attachments_message_idx').on(t.messageId),
+    index('attachments_status_idx').on(t.status, t.createdAt),
+    check('attachments_uploader_ck', sql`${t.uploaderType} in ('user', 'visitor')`),
+    check(
+      'attachments_status_ck',
+      sql`${t.status} in ('awaiting_upload', 'scanning', 'clean', 'infected', 'rejected')`,
+    ),
+    check('attachments_size_ck', sql`${t.sizeBytes} > 0`),
+  ],
 );

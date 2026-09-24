@@ -1,6 +1,7 @@
-import { coreConfigFromEnv, createCtx } from '@waychat/core';
+import { coreConfigFromEnv, createCtx, fileServicesFromEnv } from '@waychat/core';
 import { createDb } from '@waychat/db';
 import { createRegistry, loadEnv, startMetricsServer } from '@waychat/shared';
+import { createScanQueue, enqueueScan } from '@waychat/storage';
 import { Redis } from 'ioredis';
 import { buildApp } from './app.js';
 import { createRedisFeed } from './realtime.js';
@@ -9,7 +10,12 @@ import { telemetry } from './instrumentation.js';
 const env = loadEnv();
 const dbHandle = createDb(env.DATABASE_URL);
 const redis = new Redis(env.VALKEY_URL, { maxRetriesPerRequest: 2, lazyConnect: false });
-const ctx = createCtx(dbHandle.db, coreConfigFromEnv(env));
+// BullMQ exige uma conexão própria com `maxRetriesPerRequest: null`; a API só ENFILEIRA a varredura (o worker consome).
+const scanQueue = createScanQueue(redis.duplicate({ maxRetriesPerRequest: null }));
+const files = fileServicesFromEnv(env, (accountId, id) => enqueueScan(scanQueue, accountId, id));
+if (env.NODE_ENV !== 'production') await files.store.ensureBucket?.();
+if (!files.scanner) console.warn('CLAMAV_HOST vazio: anexos SEM varredura (só desenvolvimento)');
+const ctx = createCtx(dbHandle.db, coreConfigFromEnv(env), undefined, files);
 
 const registry = createRegistry('api');
 const metricsServer = startMetricsServer(registry, env.METRICS_PORT, env.METRICS_HOST);
@@ -34,6 +40,7 @@ async function shutdown(signal: string): Promise<void> {
   timer.unref();
   try {
     await app.close();
+    await scanQueue.close();
     metricsServer.close();
     await dbHandle.close();
     await telemetry.shutdown();

@@ -31,6 +31,11 @@ export const envSchema = z.object({
   S3_BUCKET: z.string().min(1),
   S3_ACCESS_KEY: z.string().min(1),
   S3_SECRET_KEY: z.string().min(1),
+  /** Endereço do S3 que o NAVEGADOR alcança (URLs assinadas de upload/download). Padrão: S3_ENDPOINT. */
+  S3_PUBLIC_ENDPOINT: z.preprocess(emptyToUndefined, z.url().optional()),
+  /** Antivírus (clamd) dos anexos. Obrigatório em produção; em desenvolvimento, sem ele os anexos passam sem varredura. */
+  CLAMAV_HOST: z.preprocess(emptyToUndefined, z.string().optional()),
+  CLAMAV_PORT: z.coerce.number().int().min(1).max(65535).default(3310),
   MASTER_KEY: base64Key32,
   /** Chaves antigas (separadas por vírgula) só para DECIFRAR durante uma rotação. */
   MASTER_KEY_PREVIOUS: z.preprocess(

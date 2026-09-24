@@ -1,5 +1,6 @@
 import type { Db } from '@waychat/db';
 import type { Env } from '@waychat/shared';
+import type { ObjectStore, Scanner } from '@waychat/storage';
 import { Keyring } from './crypto/envelope.js';
 
 export interface CoreConfig {
@@ -13,12 +14,21 @@ export interface CoreConfig {
   issuer: string;
 }
 
+/** Anexos: armazenamento, antivírus e a fila de varredura. Ausente = anexos desligados. */
+export interface FileServices {
+  store: ObjectStore;
+  /** `null` = sem antivírus (só desenvolvimento): o arquivo passa direto para "limpo". */
+  scanner: Scanner | null;
+  enqueueScan: (accountId: string, attachmentId: string) => Promise<void>;
+}
+
 export interface Ctx {
   db: Db;
   config: CoreConfig;
   keyring: Keyring;
   /** Relógio injetável (testes de bloqueio, expiração e TOTP). */
   now: () => Date;
+  files?: FileServices;
 }
 
 export function coreConfigFromEnv(
@@ -35,6 +45,17 @@ export function coreConfigFromEnv(
   };
 }
 
-export function createCtx(db: Db, config: CoreConfig, now: () => Date = () => new Date()): Ctx {
-  return { db, config, keyring: new Keyring(config.masterKey, config.masterKeyPrevious), now };
+export function createCtx(
+  db: Db,
+  config: CoreConfig,
+  now: () => Date = () => new Date(),
+  files?: FileServices,
+): Ctx {
+  return {
+    db,
+    config,
+    keyring: new Keyring(config.masterKey, config.masterKeyPrevious),
+    now,
+    ...(files ? { files } : {}),
+  };
 }

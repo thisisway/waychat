@@ -37,6 +37,7 @@ const HTTP: Record<DomainErrorCode, { status: number; message: string }> = {
   contact_in_use: { status: 409, message: 'O contato tem conversas e não pode ser excluído.' },
   api_key_invalid: { status: 401, message: 'Chave de API inválida.' },
   inbox_disabled: { status: 403, message: 'Esta caixa de entrada está desativada.' },
+  rate_limited: { status: 429, message: 'Muitas solicitações. Tente novamente mais tarde.' },
 };
 
 /** Traduz erros para `{ error: { code, message, request_id } }`. Erros inesperados nunca vazam detalhes ao cliente. */

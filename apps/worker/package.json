@@ -12,7 +12,9 @@
   "dependencies": {
     "@opentelemetry/api": "^1.9.1",
     "@waychat/db": "workspace:*",
+    "@waychat/core": "workspace:*",
     "@waychat/shared": "workspace:*",
+    "@waychat/storage": "workspace:*",
     "bullmq": "^6.3.8",
     "drizzle-orm": "^0.45.3",
     "ioredis": "^6.0.0",

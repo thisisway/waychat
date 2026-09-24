@@ -55,7 +55,22 @@ services:
       timeout: 3s
       retries: 20
 
+  # Antivírus dos anexos. Pesado (baixa as assinaturas na primeira subida): só com `--profile antivirus`.
+  # Sem ele, em desenvolvimento os anexos passam sem varredura (CLAMAV_HOST vazio no .env).
+  clamav:
+    image: clamav/clamav:stable
+    profiles: ['antivirus']
+    ports: ['127.0.0.1:3310:3310']
+    volumes: [clamdata:/var/lib/clamav]
+    healthcheck:
+      test: ['CMD', '/usr/local/bin/clamdcheck.sh']
+      interval: 30s
+      timeout: 10s
+      retries: 20
+      start_period: 120s
+
 volumes:
   pgdata:
   valkeydata:
   miniodata:
+  clamdata:

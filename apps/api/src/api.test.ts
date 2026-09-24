@@ -1,5 +1,5 @@
 import { randomBytes } from 'node:crypto';
-import { createCtx, receiveInboundMessage, type Ctx } from '@waychat/core';
+import { createCtx, receiveInboundMessage, scanAttachment, type Ctx } from '@waychat/core';
 import { startTestDb, type TestDb } from '@waychat/db/testing';
 import { loadEnv } from '@waychat/shared';
 import type { FastifyInstance, LightMyRequestResponse } from 'fastify';
@@ -7,12 +7,14 @@ import { generateSync } from 'otplib';
 import { Registry } from 'prom-client';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { buildApp } from './app.js';
+import { PNG, testFiles } from './test-files.js';
 import type { Access } from './types.js';
 
 let t: TestDb;
 let app: FastifyInstance;
 let routeAccess: Map<string, Access>;
 let coreCtx: Ctx;
+const fileServices = testFiles();
 const registry = new Registry();
 let clock = Date.UTC(2026, 0, 15, 12, 0, 0);
 const step = (s: number) => (clock += s * 1000);
@@ -103,6 +105,7 @@ beforeAll(async () => {
       issuer: 'WayChat',
     },
     () => new Date(clock),
+    fileServices.files,
   );
   const built = await buildApp({ env, ctx: coreCtx, logger: false, metrics: registry });
   app = built.app;
@@ -981,5 +984,106 @@ describe('canal API: POST /api/v1/messages', () => {
         .statusCode,
     ).toBe(400);
     expect((await post(key, msg(inbox, { account_id: crypto.randomUUID() }))).statusCode).toBe(201);
+  });
+});
+
+describe('anexos no painel', () => {
+  async function conversa() {
+    const { s: owner } = await register();
+    const me = (await call(owner, 'GET', '/auth/me')).json();
+    const inbox = (
+      await call(owner, 'POST', '/inboxes', { name: 'Site', channel_type: 'widget' })
+    ).json().inbox.id as string;
+    const r = await receiveInboundMessage(coreCtx, {
+      accountId: me.account.id,
+      inboxId: inbox,
+      identity: { channel: 'widget', externalId: 'v1', name: 'Visitante' },
+      content: 'oi',
+    });
+    return { owner, accountId: me.account.id as string, conversationId: r.conversationId };
+  }
+
+  /** Pede a URL, "envia" o arquivo, conclui e roda a varredura (o que o worker faria). */
+  async function anexoLimpo(c: Awaited<ReturnType<typeof conversa>>, name = 'foto.png') {
+    const req = await call(c.owner, 'POST', `/conversations/${c.conversationId}/attachments`, {
+      file_name: name,
+      size: PNG.length,
+    });
+    expect(req.statusCode, req.body).toBe(201);
+    const id = req.json().attachment.id as string;
+    fileServices.store.objects.set(fileServices.store.lastKey, PNG);
+    const done = await call(c.owner, 'POST', `/attachments/${id}/complete`);
+    expect(done.json().attachment.status).toBe('scanning');
+    await scanAttachment(coreCtx, c.accountId, id);
+    return id;
+  }
+
+  it('fluxo completo: pedir URL, enviar, concluir, varrer, mandar na mensagem e baixar', async () => {
+    const c = await conversa();
+    const id = await anexoLimpo(c);
+    const sent = await call(c.owner, 'POST', `/conversations/${c.conversationId}/messages`, {
+      content: '',
+      attachment_ids: [id],
+      client_message_id: crypto.randomUUID(),
+    });
+    expect(sent.statusCode, sent.body).toBe(201);
+    expect(sent.json().message.attachments).toMatchObject([
+      { id, fileName: 'foto.png', contentType: 'image/png', status: 'clean' },
+    ]);
+    const list = await call(c.owner, 'GET', `/conversations/${c.conversationId}/messages`);
+    expect(list.json().items[0].attachments).toHaveLength(1);
+    const dl = await call(c.owner, 'GET', `/attachments/${id}/download`);
+    expect(dl.statusCode).toBe(200);
+    expect(dl.json().url).toContain('foto.png');
+  });
+
+  it('extensão proibida, corpo ruim e conversa inexistente são recusados', async () => {
+    const c = await conversa();
+    const url = `/conversations/${c.conversationId}/attachments`;
+    expect((await call(c.owner, 'POST', url, { file_name: 'v.exe', size: 5 })).statusCode).toBe(
+      422,
+    );
+    expect((await call(c.owner, 'POST', url, { file_name: 'a.png' })).statusCode).toBe(400);
+    const outra = `/conversations/${crypto.randomUUID()}/attachments`;
+    expect((await call(c.owner, 'POST', outra, { file_name: 'a.png', size: 5 })).statusCode).toBe(
+      404,
+    );
+  });
+
+  it('anexo de outra conta responde 404 no download e na conclusão', async () => {
+    const a = await conversa();
+    const b = await conversa();
+    const id = await anexoLimpo(a);
+    await call(a.owner, 'POST', `/conversations/${a.conversationId}/messages`, {
+      content: 'x',
+      attachment_ids: [id],
+      client_message_id: crypto.randomUUID(),
+    });
+    expect((await call(b.owner, 'GET', `/attachments/${id}/download`)).statusCode).toBe(404);
+    expect((await call(b.owner, 'POST', `/attachments/${id}/complete`)).statusCode).toBe(404);
+  });
+
+  it('anexo ainda sem mensagem não tem download para o painel (só depois de enviado)', async () => {
+    const c = await conversa();
+    const id = await anexoLimpo(c);
+    expect((await call(c.owner, 'GET', `/attachments/${id}/download`)).statusCode).toBe(404);
+  });
+
+  it('não aceita anexo inventado nem sem a varredura terminar', async () => {
+    const c = await conversa();
+    const send = (ids: string[]) =>
+      call(c.owner, 'POST', `/conversations/${c.conversationId}/messages`, {
+        content: 'x',
+        attachment_ids: ids,
+        client_message_id: crypto.randomUUID(),
+      });
+    expect((await send([crypto.randomUUID()])).statusCode).toBe(422);
+    const req = await call(c.owner, 'POST', `/conversations/${c.conversationId}/attachments`, {
+      file_name: 'a.png',
+      size: 5,
+    });
+    fileServices.store.objects.set(fileServices.store.lastKey, PNG);
+    await call(c.owner, 'POST', `/attachments/${req.json().attachment.id as string}/complete`);
+    expect((await send([req.json().attachment.id as string])).statusCode).toBe(422); // ainda "scanning"
   });
 });

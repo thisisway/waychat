@@ -64,6 +64,27 @@
       "when": 1790205207030,
       "tag": "0008_conversation_reads_rls",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1790254460253,
+      "tag": "0009_drop_old_attachments",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1790254463195,
+      "tag": "0010_attachments",
+      "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1790254486755,
+      "tag": "0011_attachments_rls",
+      "breakpoints": true
     }
   ]
 }

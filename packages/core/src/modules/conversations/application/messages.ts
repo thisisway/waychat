@@ -4,6 +4,11 @@ import { z } from 'zod';
 import type { Ctx } from '../../../context.js';
 import { uniqueViolation } from '../../../db-errors.js';
 import { DomainError } from '../../../errors.js';
+import {
+  attachmentsByMessage,
+  claimAttachments,
+  type AttachmentView,
+} from '../../attachments/application/attachments.js';
 import { assertCan, type Actor } from '../../authz/application/actor.js';
 import { findOrCreateContactByIdentity } from '../../contacts/application/contacts.js';
 import { enqueueEvent } from '../../events/application/enqueue.js';
@@ -26,10 +31,14 @@ export interface MessageView {
   replyToId: string | null;
   status: string;
   clientMessageId: string | null;
+  attachments: AttachmentView[];
   createdAt: Date;
 }
 
-export const toMessageView = (r: typeof messages.$inferSelect): MessageView => ({
+export const toMessageView = (
+  r: typeof messages.$inferSelect,
+  attachments: AttachmentView[] = [],
+): MessageView => ({
   id: r.id,
   conversationId: r.conversationId,
   direction: r.direction as MessageView['direction'],
@@ -42,10 +51,13 @@ export const toMessageView = (r: typeof messages.$inferSelect): MessageView => (
   replyToId: r.replyToId,
   status: r.status,
   clientMessageId: r.clientMessageId,
+  attachments,
   createdAt: r.createdAt,
 });
 
-const contentSchema = z.string().trim().min(1).max(MAX_CONTENT_LENGTH);
+/** Com anexo o texto é opcional (uma foto sozinha é uma mensagem válida). */
+const optionalContent = z.string().trim().max(MAX_CONTENT_LENGTH);
+const attachmentIds = z.array(z.uuid()).max(5).default([]);
 
 /** Lock de transação por chave de texto: serializa quem disputa o mesmo recurso (uma conversa, uma identidade). */
 async function lock(tx: Tx, key: string): Promise<void> {
@@ -70,6 +82,8 @@ export interface InboundMessageInput {
   /** UUID gerado pelo cliente: reenvio com o mesmo valor não duplica. */
   clientMessageId?: string;
   contentAttributes?: Record<string, unknown>;
+  /** Anexos já enviados e limpos (do próprio remetente). Com eles, `content` pode ser vazio. */
+  attachmentIds?: string[];
   /** Restringe a inbox ao canal esperado (o canal API não pode escrever numa inbox de widget, e vice-versa). */
   channelType?: 'api' | 'widget';
 }
@@ -92,8 +106,10 @@ export async function receiveInboundMessage(
   ctx: Ctx,
   input: InboundMessageInput,
 ): Promise<InboundResult> {
-  const parsed = contentSchema.safeParse(input.content);
-  if (!parsed.success) throw new DomainError('invalid_input', 'conteúdo vazio ou grande demais');
+  const parsed = optionalContent.safeParse(input.content);
+  const ids = input.attachmentIds ?? [];
+  if (!parsed.success || (parsed.data === '' && ids.length === 0))
+    throw new DomainError('invalid_input', 'conteúdo vazio ou grande demais');
   const content = parsed.data;
 
   return withTenant(ctx.db, input.accountId, async (tx) => {
@@ -171,6 +187,17 @@ export async function receiveInboundMessage(
       })
       .returning();
     if (!row) throw new Error('falha ao gravar mensagem');
+    const attached = await claimAttachments(
+      tx,
+      {
+        accountId: input.accountId,
+        inboxId: input.inboxId,
+        uploaderType: 'visitor',
+        uploaderId: input.identity.externalId,
+      },
+      row.id,
+      ids,
+    );
 
     const reopened = !!latest && (latest.status === 'resolved' || latest.status === 'snoozed');
     await tx
@@ -213,7 +240,7 @@ export async function receiveInboundMessage(
       },
     });
     return {
-      message: toMessageView(row),
+      message: toMessageView(row, attached),
       conversationId,
       contactId,
       conversationCreated: created,
@@ -252,7 +279,8 @@ async function findExisting(
 
 export const sendMessageInput = z.object({
   conversationId: z.uuid(),
-  content: contentSchema,
+  content: optionalContent,
+  attachmentIds,
   /** Nota interna: só a equipe vê; nunca vai ao cliente. */
   private: z.boolean().default(false),
   /** UUID gerado pelo navegador (UI otimista). Obrigatório: é a chave de idempotência do reenvio. */
@@ -277,6 +305,8 @@ export async function sendMessage(
       parsed.error.issues.map((i) => i.path.join('.')).join(', '),
     );
   const input = parsed.data;
+  if (input.content === '' && input.attachmentIds.length === 0)
+    throw new DomainError('invalid_input', 'mensagem vazia');
 
   const attempt = () =>
     withTenant(ctx.db, actor.accountId, async (tx) => {
@@ -296,7 +326,8 @@ export async function sendMessage(
       if (dup) {
         if (dup.conversationId !== conv.id)
           throw new DomainError('invalid_input', 'client_message_id já usado em outra conversa');
-        return { message: toMessageView(dup), duplicate: true };
+        const dupAtt = await attachmentsByMessage(tx, [dup.id]);
+        return { message: toMessageView(dup, dupAtt.get(dup.id) ?? []), duplicate: true };
       }
 
       if (input.replyToId) {
@@ -326,6 +357,17 @@ export async function sendMessage(
         })
         .returning();
       if (!row) throw new Error('falha ao gravar mensagem');
+      const attached = await claimAttachments(
+        tx,
+        {
+          accountId: actor.accountId,
+          inboxId: conv.inboxId,
+          uploaderType: 'user',
+          uploaderId: actor.userId,
+        },
+        row.id,
+        input.attachmentIds,
+      );
       await tx
         .update(conversations)
         .set({ lastActivityAt: nowMs })
@@ -343,7 +385,7 @@ export async function sendMessage(
           direction: 'out',
         },
       });
-      return { message: toMessageView(row), duplicate: false };
+      return { message: toMessageView(row, attached), duplicate: false };
     });
 
   try {
@@ -377,9 +419,9 @@ export async function listMessages(
 ): Promise<{ items: MessageView[]; nextCursor: string | null }> {
   const limit = Math.min(Math.max(opts.limit ?? 50, 1), 200);
   const before = opts.before ? decodeCursor(opts.before) : null;
-  const rows = await withTenant(ctx.db, actor.accountId, async (tx) => {
+  const { rows, atts } = await withTenant(ctx.db, actor.accountId, async (tx) => {
     await loadVisibleConversation(tx, actor, conversationId);
-    return tx
+    const found = await tx
       .select()
       .from(messages)
       .where(
@@ -395,11 +437,18 @@ export async function listMessages(
       )
       .orderBy(desc(messages.createdAt), desc(messages.id))
       .limit(limit + 1);
+    return {
+      rows: found,
+      atts: await attachmentsByMessage(
+        tx,
+        found.map((m) => m.id),
+      ),
+    };
   });
   const items = rows.slice(0, limit);
   const last = items.at(-1);
   return {
-    items: items.map(toMessageView),
+    items: items.map((m) => toMessageView(m, atts.get(m.id) ?? [])),
     nextCursor: rows.length > limit && last ? encodeCursor(last.createdAt, last.id) : null,
   };
 }

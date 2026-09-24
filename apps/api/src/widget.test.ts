@@ -4,7 +4,10 @@ import {
   createCtx,
   createInbox,
   login,
+  completeUpload,
   registerAccount,
+  requestUpload,
+  scanAttachment,
   sendMessage,
   updateInbox,
   type AuthenticatedActor,
@@ -17,6 +20,7 @@ import { io as connectClient, type Socket } from 'socket.io-client';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { buildApp } from './app.js';
 import type { EventFeed } from './realtime.js';
+import { PNG, testFiles } from './test-files.js';
 
 const PANEL = 'http://localhost:5173';
 const SITE = 'https://loja.example.com';
@@ -27,6 +31,7 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 let t: TestDb;
 let ctx: Ctx;
+const fileServices = testFiles();
 let app: FastifyInstance;
 let port: number;
 
@@ -108,15 +113,20 @@ beforeAll(async () => {
     MASTER_KEY: randomBytes(32).toString('base64'),
     SESSION_SECRET: 'w'.repeat(48),
   });
-  ctx = createCtx(t.app.db, {
-    sessionSecret: env.SESSION_SECRET,
-    masterKey: env.MASTER_KEY,
-    masterKeyPrevious: [],
-    accessTtlSeconds: 600,
-    refreshTtlSeconds: 30 * 86400,
-    challengeTtlSeconds: 300,
-    issuer: 'WayChat',
-  });
+  ctx = createCtx(
+    t.app.db,
+    {
+      sessionSecret: env.SESSION_SECRET,
+      masterKey: env.MASTER_KEY,
+      masterKeyPrevious: [],
+      accessTtlSeconds: 600,
+      refreshTtlSeconds: 30 * 86400,
+      challengeTtlSeconds: 300,
+      issuer: 'WayChat',
+    },
+    undefined,
+    fileServices.files,
+  );
   const built = await buildApp({ env, ctx, logger: false, realtime: { feed } });
   app = built.app;
   await app.listen({ port: 0, host: '127.0.0.1' });
@@ -269,12 +279,17 @@ describe('mensagens do visitante', () => {
     const s = await shop();
     const v = await open(s.inbox.publicKey);
     for (const body of [
-      { content: '   ' },
       { content: 'x'.repeat(10_001) },
       { content: 'ok', client_message_id: 'nao-uuid' },
+      { content: 'ok', attachment_ids: ['nao-uuid'] },
     ]) {
       expect((await post('/widget/v1/messages', body, bearer(v.token))).statusCode).toBe(400);
     }
+    // sem texto e sem anexo: a regra é do domínio
+    expect(
+      (await post('/widget/v1/messages', { content: '   ' }, bearer(v.token))).statusCode,
+    ).toBe(422);
+    expect((await post('/widget/v1/messages', {}, bearer(v.token))).statusCode).toBe(422);
   });
 
   it('histórico: o visitante vê as próprias mensagens e as respostas, nunca notas privadas nem a conversa de outro', async () => {
@@ -340,27 +355,35 @@ describe('mensagens do visitante', () => {
   });
 });
 
-describe('tempo real do visitante', () => {
-  function connectVisitor(token: string, origin: string | null = SITE) {
-    const socket = connectClient(`http://127.0.0.1:${String(port)}/widget`, {
-      transports: ['websocket'],
-      reconnection: false,
-      forceNew: true,
-      auth: { token },
-      extraHeaders: origin ? { origin } : {},
-    });
-    sockets.push(socket);
-    const messages: { id: string; from: string; content: string }[] = [];
-    socket.on('message', (m: { id: string; from: string; content: string }) => messages.push(m));
-    const ready = new Promise<void>((resolve, reject) => {
-      socket.once('ready', () => {
-        resolve();
-      });
-      socket.once('connect_error', reject);
-    });
-    return { socket, messages, ready };
-  }
+interface VisitorPush {
+  id: string;
+  from: string;
+  content: string;
+  attachments: { id: string; file_name: string }[];
+}
 
+function connectVisitorSocket(token: string, origin: string | null = SITE) {
+  const socket = connectClient(`http://127.0.0.1:${String(port)}/widget`, {
+    transports: ['websocket'],
+    reconnection: false,
+    forceNew: true,
+    auth: { token },
+    extraHeaders: origin ? { origin } : {},
+  });
+  sockets.push(socket);
+  const messages: VisitorPush[] = [];
+  socket.on('message', (m: VisitorPush) => messages.push(m));
+  const ready = new Promise<void>((resolve, reject) => {
+    socket.once('ready', () => {
+      resolve();
+    });
+    socket.once('connect_error', reject);
+  });
+  return { socket, messages, ready };
+}
+const connectVisitor = connectVisitorSocket;
+
+describe('tempo real do visitante', () => {
   it('sem token, token inválido ou origem não permitida: conexão recusada', async () => {
     const s = await shop();
     const v = await open(s.inbox.publicKey);
@@ -402,5 +425,127 @@ describe('tempo real do visitante', () => {
 
     expect(ca.messages.map((m) => [m.from, m.content])).toEqual([['agent', 'Resposta para A']]);
     expect(cb.messages).toEqual([]); // nem a própria mensagem do B volta como "resposta"
+  });
+});
+
+describe('anexos do visitante', () => {
+  const upload = async (token: string, name = 'comprovante.png') => {
+    const req = await post(
+      '/widget/v1/attachments',
+      { file_name: name, size: PNG.length },
+      bearer(token),
+    );
+    expect(req.statusCode, req.body).toBe(201);
+    const id = req.json().attachment.id as string;
+    fileServices.store.objects.set(fileServices.store.lastKey, PNG);
+    const done = await post(`/widget/v1/attachments/${id}/complete`, {}, bearer(token));
+    expect(done.json().attachment.status).toBe('scanning');
+    return id;
+  };
+  const varrer = (accountId: string, id: string) => scanAttachment(ctx, accountId, id);
+
+  it('visitante envia arquivo (varrido) e o atendente o recebe na conversa', async () => {
+    const s = await shop();
+    const v = await open(s.inbox.publicKey);
+    const id = await upload(v.token);
+    // enquanto a varredura não termina, não pode ser enviado
+    const cedo = await post(
+      '/widget/v1/messages',
+      { content: 'segue', attachment_ids: [id] },
+      bearer(v.token),
+    );
+    expect(cedo.statusCode).toBe(422);
+    await varrer(s.accountId, id);
+    const sent = await post(
+      '/widget/v1/messages',
+      { content: '', attachment_ids: [id] },
+      bearer(v.token),
+    );
+    expect(sent.statusCode, sent.body).toBe(200);
+    expect(sent.json().message.attachments).toMatchObject([
+      { id, file_name: 'comprovante.png', content_type: 'image/png' },
+    ]);
+    const list = (await get('/widget/v1/messages', bearer(v.token))).json().items;
+    expect(list[0].attachments).toHaveLength(1);
+    const url = await get(`/widget/v1/attachments/${id}/url`, bearer(v.token));
+    expect(url.statusCode).toBe(200);
+  });
+
+  it('um visitante não usa nem baixa o arquivo de outro; extensão proibida é recusada', async () => {
+    const s = await shop();
+    const a = await open(s.inbox.publicKey);
+    const b = await open(s.inbox.publicKey);
+    const id = await upload(a.token);
+    await varrer(s.accountId, id);
+    expect((await get(`/widget/v1/attachments/${id}/url`, bearer(b.token))).statusCode).toBe(404);
+    expect(
+      (await post(`/widget/v1/attachments/${id}/complete`, {}, bearer(b.token))).statusCode,
+    ).toBe(404);
+    const roubo = await post(
+      '/widget/v1/messages',
+      { content: 'x', attachment_ids: [id] },
+      bearer(b.token),
+    );
+    expect(roubo.statusCode).toBe(422);
+    const exe = await post(
+      '/widget/v1/attachments',
+      { file_name: 'v.exe', size: 5 },
+      bearer(a.token),
+    );
+    expect(exe.statusCode).toBe(422);
+    expect((await post('/widget/v1/attachments', { file_name: 'a.png', size: 5 })).statusCode).toBe(
+      401,
+    );
+  });
+
+  it('a resposta do atendente com anexo chega ao visitante pelo socket, e só ele consegue baixar', async () => {
+    const s = await shop();
+    const a = await open(s.inbox.publicKey);
+    const b = await open(s.inbox.publicKey);
+    await post('/widget/v1/messages', { content: 'oi A' }, bearer(a.token));
+    await post('/widget/v1/messages', { content: 'oi B' }, bearer(b.token));
+    const conv = await t.owner.pool.query(
+      `select cv.id from conversations cv join messages m on m.conversation_id = cv.id
+       where m.content = 'oi A' and cv.account_id = $1`,
+      [s.accountId],
+    );
+    const conversationId = (conv.rows[0] as { id: string }).id;
+
+    // o atendente sobe um arquivo pela API do painel (core direto) e responde com ele
+    const subject = {
+      accountId: s.accountId,
+      uploaderType: 'user' as const,
+      uploaderId: s.owner.userId,
+    };
+    const { attachment } = await requestUpload(
+      ctx,
+      { ...subject, inboxId: s.inbox.id },
+      { fileName: 'proposta.png', size: PNG.length },
+    );
+    fileServices.store.objects.set(fileServices.store.lastKey, PNG);
+    await completeUpload(ctx, subject, attachment.id);
+    await varrer(s.accountId, attachment.id);
+
+    const socketA = connectVisitorSocket(a.token);
+    await socketA.ready;
+    await sendMessage(ctx, s.owner, {
+      conversationId,
+      content: 'Segue a proposta',
+      attachmentIds: [attachment.id],
+      clientMessageId: randomUUID(),
+    });
+    await pump(s.accountId);
+    await sleep(300);
+    expect(socketA.messages).toHaveLength(1);
+    expect(socketA.messages[0]).toMatchObject({
+      content: 'Segue a proposta',
+      attachments: [{ id: attachment.id, file_name: 'proposta.png' }],
+    });
+    expect(
+      (await get(`/widget/v1/attachments/${attachment.id}/url`, bearer(a.token))).statusCode,
+    ).toBe(200);
+    expect(
+      (await get(`/widget/v1/attachments/${attachment.id}/url`, bearer(b.token))).statusCode,
+    ).toBe(404);
   });
 });

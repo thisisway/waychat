@@ -6,6 +6,10 @@ import { z } from 'zod';
 import type { Ctx } from '../../../context.js';
 import { deriveKey, randomToken, safeEqual } from '../../../crypto/tokens.js';
 import { DomainError } from '../../../errors.js';
+import {
+  attachmentsByMessage,
+  type AttachmentView,
+} from '../../attachments/application/attachments.js';
 import { receiveInboundMessage } from '../../conversations/application/messages.js';
 import { readConfig } from '../../inbox/application/inboxes.js';
 
@@ -33,6 +37,7 @@ export interface VisitorMessage {
   content: string;
   createdAt: Date;
   clientMessageId: string | null;
+  attachments: AttachmentView[];
 }
 
 const visitorKey = (ctx: Ctx) => deriveKey(ctx.config.sessionSecret, 'widget-visitor');
@@ -196,17 +201,23 @@ export async function openWidgetSession(
   };
 }
 
-const toVisitorMessage = (m: typeof messages.$inferSelect): VisitorMessage => ({
+const toVisitorMessage = (
+  m: typeof messages.$inferSelect,
+  attachments: AttachmentView[] = [],
+): VisitorMessage => ({
   id: m.id,
   from: m.direction === 'in' ? 'visitor' : 'agent',
   content: m.content ?? '',
   createdAt: m.createdAt,
   clientMessageId: m.clientMessageId,
+  attachments,
 });
 
 export const visitorSendInput = z.object({
-  content: z.string().trim().min(1).max(10_000),
+  // com anexo o texto é opcional; a regra "nem texto nem anexo" fica em receiveInboundMessage
+  content: z.string().trim().max(10_000).default(''),
   client_message_id: z.uuid().optional(),
+  attachment_ids: z.array(z.uuid()).max(5).default([]),
 });
 
 export async function visitorSend(
@@ -222,6 +233,7 @@ export async function visitorSend(
     channelType: 'widget',
     identity: { channel: CHANNEL, externalId: v.externalId, name: v.name, email: v.email },
     content: parsed.data.content,
+    attachmentIds: parsed.data.attachment_ids,
     ...(parsed.data.client_message_id ? { clientMessageId: parsed.data.client_message_id } : {}),
   });
   return {
@@ -231,6 +243,7 @@ export async function visitorSend(
       content: res.message.content ?? '',
       createdAt: res.message.createdAt,
       clientMessageId: res.message.clientMessageId,
+      attachments: res.message.attachments,
     },
     duplicate: res.duplicate,
   };
@@ -259,7 +272,11 @@ export async function visitorMessages(ctx: Ctx, v: Visitor, limit = 50): Promise
       .where(and(eq(messages.conversationId, conv.id), eq(messages.private, false)))
       .orderBy(desc(messages.createdAt), desc(messages.id))
       .limit(Math.min(limit, 200));
-    return rows.reverse().map(toVisitorMessage);
+    const atts = await attachmentsByMessage(
+      tx,
+      rows.map((m) => m.id),
+    );
+    return rows.reverse().map((m) => toVisitorMessage(m, atts.get(m.id) ?? []));
   });
 }
 
@@ -290,8 +307,12 @@ export async function loadVisitorDelivery(
       )
       .orderBy(asc(contactIdentities.createdAt))
       .limit(1);
-    return row
-      ? { inboxId: row.m.inboxId, externalId: row.externalId, message: toVisitorMessage(row.m) }
-      : null;
+    if (!row) return null;
+    const atts = await attachmentsByMessage(tx, [row.m.id]);
+    return {
+      inboxId: row.m.inboxId,
+      externalId: row.externalId,
+      message: toVisitorMessage(row.m, atts.get(row.m.id) ?? []),
+    };
   });
 }

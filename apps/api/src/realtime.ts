@@ -103,6 +103,7 @@ interface WidgetServerToClient {
     content: string;
     created_at: Date;
     client_message_id: string | null;
+    attachments: { id: string; file_name: string; content_type: string | null; size: number }[];
   }) => void;
 }
 
@@ -287,6 +288,12 @@ export async function attachRealtime(opts: RealtimeOptions): Promise<Realtime> {
           content: target.message.content,
           created_at: target.message.createdAt,
           client_message_id: target.message.clientMessageId,
+          attachments: target.message.attachments.map((a) => ({
+            id: a.id,
+            file_name: a.fileName,
+            content_type: a.contentType,
+            size: a.size,
+          })),
         });
       }
     }

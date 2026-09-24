@@ -159,3 +159,22 @@ export {
   type VisitorMessage,
   type WidgetSession,
 } from './modules/widget/application/widget.js';
+export {
+  claimAttachments,
+  completeUpload,
+  downloadUrlFor,
+  getOwnAttachment,
+  MAX_ATTACHMENTS_PER_MESSAGE,
+  requestUpload,
+  requestUploadInput,
+  scanAttachment,
+  toAttachmentView,
+  type AttachmentView,
+  type UploadSubject,
+} from './modules/attachments/application/attachments.js';
+export type { FileServices } from './context.js';
+export {
+  agentAttachmentUrl,
+  visitorAttachmentUrl,
+} from './modules/attachments/application/download.js';
+export { fileServicesFromEnv } from './files.js';

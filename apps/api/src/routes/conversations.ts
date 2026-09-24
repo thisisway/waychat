@@ -23,6 +23,7 @@ import type { FastifyInstance } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { access } from '../types.js';
+import { attachmentView } from './attachments.js';
 import { actorOf } from './auth.js';
 
 const ok = z.object({ ok: z.literal(true) });
@@ -67,6 +68,7 @@ const message = z.object({
   replyToId: z.uuid().nullable(),
   status: z.string(),
   clientMessageId: z.uuid().nullable(),
+  attachments: z.array(attachmentView),
   createdAt: z.date(),
 });
 
@@ -208,6 +210,7 @@ export function conversationRoutes(app: FastifyInstance, ctx: Ctx): void {
         params: idParam,
         body: z.object({
           content: z.string().max(10_000),
+          attachment_ids: z.array(z.uuid()).max(5).optional(),
           client_message_id: z.uuid(),
           private: z.boolean().optional(),
           reply_to_id: z.uuid().optional(),
@@ -223,6 +226,7 @@ export function conversationRoutes(app: FastifyInstance, ctx: Ctx): void {
       const res = await sendMessage(ctx, actorOf(req), {
         conversationId: req.params.id,
         content: b.content,
+        ...(b.attachment_ids ? { attachmentIds: b.attachment_ids } : {}),
         clientMessageId: b.client_message_id,
         ...(b.private !== undefined ? { private: b.private } : {}),
         ...(b.reply_to_id ? { replyToId: b.reply_to_id } : {}),

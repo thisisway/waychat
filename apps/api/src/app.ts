@@ -21,6 +21,7 @@ import { adminRoutes } from './routes/admin.js';
 import { contactRoutes } from './routes/contacts.js';
 import { conversationRoutes } from './routes/conversations.js';
 import { inboxRoutes } from './routes/inboxes.js';
+import { attachmentRoutes } from './routes/attachments.js';
 import { channelApiRoutes } from './routes/channel-api.js';
 import { syncRoutes } from './routes/sync.js';
 import { widgetRoutes } from './routes/widget.js';
@@ -129,6 +130,7 @@ export async function buildApp(deps: AppDeps): Promise<BuiltApp> {
   syncRoutes(app, ctx);
   channelApiRoutes(app, ctx);
   widgetRoutes(app, ctx);
+  attachmentRoutes(app, ctx);
   app.get('/openapi.json', { config: access.public }, () => app.swagger());
 
   // requestId também no header de resposta para correlação com os logs

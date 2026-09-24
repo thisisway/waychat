@@ -34,4 +34,5 @@ export type DomainErrorCode =
   | 'inbox_in_use'
   | 'contact_in_use'
   | 'api_key_invalid'
-  | 'inbox_disabled';
+  | 'inbox_disabled'
+  | 'rate_limited';
