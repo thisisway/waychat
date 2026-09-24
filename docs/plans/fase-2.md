@@ -1,6 +1,6 @@
 # Plano — Fase 2 (WhatsApp Cloud API)
 
-Status: **em execução** — passos 1 (pacote de canais, fixtures e contrato) e 2 (banco) concluídos. Base: branch `fase-1` (PR #11). Decisões abaixo foram tomadas por padrão, seguindo "faça como achar melhor"; as que dependem de você estão em "Perguntas em aberto".
+Status: **em execução** — passos 1 (pacote de canais, fixtures e contrato), 2 (banco) e 3 (conexão da inbox) concluídos. Base: branch `fase-1` (PR #11). Decisões abaixo foram tomadas por padrão, seguindo "faça como achar melhor"; as que dependem de você estão em "Perguntas em aberto".
 
 ## Escopo (seção 8 do prompt)
 

@@ -178,3 +178,16 @@ export {
   visitorAttachmentUrl,
 } from './modules/attachments/application/download.js';
 export { fileServicesFromEnv } from './files.js';
+export {
+  connectWhatsApp,
+  connectWhatsAppInput,
+  DEFAULT_OPT_OUT_KEYWORDS,
+  getWhatsAppConnection,
+  loadWhatsAppByPublicKey,
+  readWhatsAppConfig,
+  updateWhatsAppConnection,
+  updateWhatsAppInput,
+  type WhatsAppConfig,
+  type WhatsAppConnectionView,
+  type WhatsAppTarget,
+} from './modules/inbox/application/whatsapp.js';

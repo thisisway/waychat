@@ -1087,3 +1087,149 @@ describe('anexos no painel', () => {
     expect((await send([req.json().attachment.id as string])).statusCode).toBe(422); // ainda "scanning"
   });
 });
+
+describe('conexão do WhatsApp', () => {
+  const ACCESS = 'EAAGm0PX4ZCpsBO1234567890abcdefghijklmnopqrstuv';
+  const SECRET = '0123456789abcdef0123456789abcdef';
+  const body = (over: Record<string, unknown> = {}) => ({
+    name: 'WhatsApp Vendas',
+    phone_number_id: '106540352242922',
+    waba_id: '102290129340398',
+    access_token: ACCESS,
+    app_secret: SECRET,
+    ...over,
+  });
+
+  async function equipe() {
+    const { s: owner } = await register();
+    const roles = (await call(owner, 'GET', '/roles')).json().items as {
+      id: string;
+      name: string;
+    }[];
+    const email = `ag-${uniq()}@exemplo.com`;
+    await call(owner, 'POST', '/members', {
+      email,
+      name: 'Ana',
+      password: PASSWORD,
+      role_id: roles.find((r) => r.name === 'Agente')?.id,
+    });
+    const addr = ip();
+    const agent = sessionFrom(
+      await call(null, 'POST', '/auth/login', { email, password: PASSWORD }, { ip: addr }),
+      addr,
+    );
+    return { owner, agent };
+  }
+
+  it('conecta o número: segredos mascarados na resposta e cifrados no banco', async () => {
+    const { owner } = await equipe();
+    const res = await call(owner, 'POST', '/inboxes/whatsapp', body());
+    expect(res.statusCode, res.body).toBe(201);
+    const { inbox, connection } = res.json();
+    expect(inbox.channelType).toBe('whatsapp');
+    expect(connection).toMatchObject({
+      phoneNumberId: '106540352242922',
+      wabaId: '102290129340398',
+      accessToken: `••••${ACCESS.slice(-4)}`,
+      appSecret: `••••${SECRET.slice(-4)}`,
+      webhookPath: `/webhooks/whatsapp/${inbox.publicKey as string}`,
+      optOutKeywords: ['SAIR', 'PARAR'],
+      rateLimitPerSecond: 80,
+    });
+    expect(connection.verifyToken).toMatch(/^[A-Za-z0-9_-]{32}$/);
+    // nem na resposta, nem no banco em texto puro, nem na auditoria
+    expect(res.body).not.toContain(ACCESS);
+    expect(res.body).not.toContain(SECRET);
+    const row = await t.owner.pool.query('select config_encrypted from inboxes where id = $1', [
+      inbox.id,
+    ]);
+    const stored = row.rows[0].config_encrypted as string;
+    expect(stored).not.toContain(ACCESS);
+    expect(stored).not.toContain(SECRET);
+    const audit = await t.owner.pool.query(
+      'select metadata::text as m from audit_logs where target_id = $1',
+      [inbox.id],
+    );
+    expect(JSON.stringify(audit.rows)).not.toContain(ACCESS);
+    expect(JSON.stringify(audit.rows)).not.toContain(SECRET);
+    // a leitura posterior também vem mascarada
+    const again = await call(owner, 'GET', `/inboxes/${inbox.id as string}/whatsapp`);
+    expect(again.body).not.toContain(ACCESS);
+    expect(again.json().verifyToken).toBe(connection.verifyToken);
+  });
+
+  it('só quem gerencia caixas de entrada conecta, lê ou altera', async () => {
+    const { owner, agent } = await equipe();
+    const created = (await call(owner, 'POST', '/inboxes/whatsapp', body())).json();
+    const id = created.inbox.id as string;
+    expect(
+      (await call(agent, 'POST', '/inboxes/whatsapp', body({ name: 'Outro' }))).statusCode,
+    ).toBe(403);
+    expect((await call(agent, 'GET', `/inboxes/${id}/whatsapp`)).statusCode).toBe(403);
+    expect(
+      (await call(agent, 'PATCH', `/inboxes/${id}/whatsapp`, { rotate_verify_token: true }))
+        .statusCode,
+    ).toBe(403);
+  });
+
+  it('valida os dados: só dígitos nos ids, tamanho mínimo dos segredos, nome repetido', async () => {
+    const { owner } = await equipe();
+    for (const over of [
+      { phone_number_id: 'abc' },
+      { waba_id: '12' },
+      { access_token: 'curto' },
+      { app_secret: 'curto' },
+      { name: 'x' },
+    ]) {
+      expect(
+        (await call(owner, 'POST', '/inboxes/whatsapp', body(over))).statusCode,
+        JSON.stringify(over),
+      ).toBe(422);
+    }
+    expect((await call(owner, 'POST', '/inboxes/whatsapp', body())).statusCode).toBe(201);
+    expect((await call(owner, 'POST', '/inboxes/whatsapp', body())).statusCode).toBe(409);
+  });
+
+  it('rotação: token e segredo novos substituem os antigos; verify token novo sob pedido', async () => {
+    const { owner } = await equipe();
+    const created = (await call(owner, 'POST', '/inboxes/whatsapp', body())).json();
+    const id = created.inbox.id as string;
+    const novo = 'EAAGnovoTokenNovoTokenNovoToken9999';
+    const res = await call(owner, 'PATCH', `/inboxes/${id}/whatsapp`, {
+      access_token: novo,
+      rotate_verify_token: true,
+      opt_out_keywords: ['sair', 'Cancelar', 'sair'],
+      opt_out_reply: null,
+      rate_limit_per_second: 20,
+    });
+    expect(res.statusCode, res.body).toBe(200);
+    const c = res.json();
+    expect(c.accessToken).toBe('••••9999');
+    expect(c.appSecret).toBe(created.connection.appSecret); // não informado: continua o mesmo
+    expect(c.verifyToken).not.toBe(created.connection.verifyToken);
+    expect(c.optOutKeywords).toEqual(['SAIR', 'CANCELAR']);
+    expect(c.optOutReply).toBeNull();
+    expect(c.rateLimitPerSecond).toBe(20);
+    expect(res.body).not.toContain(novo);
+  });
+
+  it('a rota genérica não cria caixa de WhatsApp (faltariam as credenciais) e a lista mostra o canal', async () => {
+    const { owner } = await equipe();
+    const generic = await call(owner, 'POST', '/inboxes', {
+      name: 'Zap',
+      channel_type: 'whatsapp',
+    });
+    expect(generic.statusCode).toBe(422);
+    await call(owner, 'POST', '/inboxes/whatsapp', body());
+    const list = (await call(owner, 'GET', '/inboxes')).json().items as { channelType: string }[];
+    expect(list.map((i) => i.channelType)).toContain('whatsapp');
+  });
+
+  it('caixa de outro canal não tem conexão WhatsApp (404)', async () => {
+    const { owner } = await equipe();
+    const widget = (
+      await call(owner, 'POST', '/inboxes', { name: 'Site', channel_type: 'widget' })
+    ).json().inbox.id as string;
+    expect((await call(owner, 'GET', `/inboxes/${widget}/whatsapp`)).statusCode).toBe(404);
+  });
+});

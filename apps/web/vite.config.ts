@@ -19,6 +19,7 @@ const apiPaths = [
   '/api-keys',
   '/sync',
   '/attachments',
+  '/webhooks',
 ];
 
 export default defineConfig({

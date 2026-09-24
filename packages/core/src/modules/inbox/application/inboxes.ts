@@ -12,7 +12,7 @@ import { enqueueEvent } from '../../events/application/enqueue.js';
 
 const { inboxes, inboxMembers, accountUsers, conversations, users } = schema;
 
-export const CHANNEL_TYPES = ['api', 'widget'] as const;
+export const CHANNEL_TYPES = ['api', 'widget', 'whatsapp'] as const;
 export type ChannelType = (typeof CHANNEL_TYPES)[number];
 
 /** Configuração do canal, guardada CIFRADA (AES-256-GCM, AAD `inbox:<id>`). Nada aqui vai para log. */
@@ -55,7 +55,7 @@ export function readConfig(
   );
 }
 
-function toView(
+export function toInboxView(
   ctx: Ctx,
   row: {
     id: string;
@@ -108,6 +108,9 @@ export async function createInbox(
 ): Promise<{ inbox: InboxView; identitySecret: string | null }> {
   assertCan(actor, 'inboxes:manage');
   const input = parseInput(createInboxInput, rawInput);
+  // o WhatsApp exige credenciais da Meta: tem rota própria (`connectWhatsApp`)
+  if (input.channelType === 'whatsapp')
+    throw new DomainError('invalid_input', 'use a conexão do WhatsApp para criar esta caixa');
   const id = uuidv7();
   const identitySecret = input.channelType === 'widget' ? newIdentitySecret() : null;
   const config: WidgetConfig | null =
@@ -153,7 +156,7 @@ export async function createInbox(
       });
       return created;
     });
-    return { inbox: toView(ctx, row), identitySecret };
+    return { inbox: toInboxView(ctx, row), identitySecret };
   } catch (e) {
     if (uniqueViolation(e)) throw new DomainError('name_taken');
     throw e;
@@ -182,7 +185,7 @@ export async function listInboxes(ctx: Ctx, actor: Actor): Promise<InboxView[]> 
       .where(eq(inboxMembers.userId, actor.userId))
       .orderBy(inboxes.createdAt);
   });
-  return rows.map((r) => toView(ctx, r));
+  return rows.map((r) => toInboxView(ctx, r));
 }
 
 /** Ids das inboxes que o usuário enxerga (base do filtro de visibilidade das conversas). */
@@ -256,7 +259,7 @@ export async function updateInbox(
       });
       return updated;
     });
-    return toView(ctx, row);
+    return toInboxView(ctx, row);
   } catch (e) {
     if (uniqueViolation(e)) throw new DomainError('name_taken');
     throw e;
