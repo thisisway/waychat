@@ -390,5 +390,14 @@ export async function setInboxMembers(
       targetId: inboxId,
       metadata: { count: unique.length },
     });
+    // Quem entra ou sai de uma inbox passa a enxergar (ou deixa de enxergar) as conversas dela: o gateway em tempo
+    // real recalcula a visibilidade dos usuários conectados ao receber este evento.
+    await enqueueEvent(tx, {
+      accountId: actor.accountId,
+      aggregateType: 'inbox',
+      aggregateId: inboxId,
+      type: 'inbox.updated',
+      payload: { inbox_id: inboxId },
+    });
   });
 }

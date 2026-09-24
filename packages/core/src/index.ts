@@ -133,3 +133,14 @@ export {
   type LabelView,
   type CannedResponseView,
 } from './modules/conversations/application/labels.js';
+
+export {
+  canSeeEvent,
+  loadEventScope,
+  type EventScope,
+} from './modules/events/application/visibility.js';
+export {
+  listEventsSince,
+  currentCursor,
+  type SyncResult,
+} from './modules/events/application/sync.js';

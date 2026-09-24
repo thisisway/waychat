@@ -838,3 +838,47 @@ describe('conversas pela API', () => {
     ).toBe(200);
   });
 });
+
+describe('GET /sync pela API', () => {
+  it('cliente novo recebe o cursor; depois recebe só os eventos novos que pode ver', async () => {
+    const { s: owner } = await register();
+    const me = (await call(owner, 'GET', '/auth/me')).json();
+    const inbox = (
+      await call(owner, 'POST', '/inboxes', { name: 'Site', channel_type: 'widget' })
+    ).json().inbox.id as string;
+    const boot = await call(owner, 'GET', '/sync');
+    expect(boot.statusCode, boot.body).toBe(200);
+    expect(boot.json()).toMatchObject({ events: [], has_more: false });
+    const start = boot.json().cursor as number;
+    expect(start).toBeGreaterThan(0);
+
+    await receiveInboundMessage(coreCtx, {
+      accountId: me.account.id,
+      inboxId: inbox,
+      identity: { channel: 'widget', externalId: 'v1', name: 'Visitante' },
+      content: 'texto que nunca vai no evento',
+    });
+    const next = await call(owner, 'GET', `/sync?since=${String(start)}`);
+    const body = next.json();
+    expect(body.events.map((e: { type: string }) => e.type)).toEqual([
+      'conversation.created',
+      'message.created',
+    ]);
+    expect(body.events[0]).toMatchObject({ account_id: me.account.id, cursor: start + 1 });
+    expect(JSON.stringify(body)).not.toContain('nunca vai no evento');
+    expect(body.cursor).toBe(start + 2);
+    expect((await call(owner, 'GET', `/sync?since=${String(body.cursor)}`)).json().events).toEqual(
+      [],
+    );
+  });
+
+  it('valida os parâmetros e respeita o limite com has_more', async () => {
+    const { s: owner } = await register();
+    expect((await call(owner, 'GET', '/sync?since=-1')).statusCode).toBe(400);
+    expect((await call(owner, 'GET', '/sync?since=abc')).statusCode).toBe(400);
+    expect((await call(owner, 'GET', '/sync?since=0&limit=501')).statusCode).toBe(400);
+    const page = await call(owner, 'GET', '/sync?since=0&limit=1');
+    expect(page.json().events).toHaveLength(1);
+    expect(page.json().has_more).toBe(true);
+  });
+});

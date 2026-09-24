@@ -20,6 +20,7 @@ import { adminRoutes } from './routes/admin.js';
 import { contactRoutes } from './routes/contacts.js';
 import { conversationRoutes } from './routes/conversations.js';
 import { inboxRoutes } from './routes/inboxes.js';
+import { syncRoutes } from './routes/sync.js';
 import { authRoutes } from './routes/auth.js';
 import { healthRoutes } from './routes/health.js';
 import { access, type Access } from './types.js';
@@ -103,6 +104,7 @@ export async function buildApp(deps: AppDeps): Promise<BuiltApp> {
   inboxRoutes(app, ctx);
   contactRoutes(app, ctx);
   conversationRoutes(app, ctx);
+  syncRoutes(app, ctx);
   app.get('/openapi.json', { config: access.public }, () => app.swagger());
 
   // requestId também no header de resposta para correlação com os logs

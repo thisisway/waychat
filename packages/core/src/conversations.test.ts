@@ -14,10 +14,12 @@ import {
   createCannedResponse,
   createInbox,
   createLabel,
+  currentCursor,
   deleteCannedResponse,
   getConversation,
   listCannedResponses,
   listConversations,
+  listEventsSince,
   listMessages,
   login,
   markConversationRead,
@@ -642,5 +644,144 @@ describe('atualização de conversas, labels e respostas prontas', () => {
     );
     await deleteCannedResponse(ctx, a.actor, hi.id);
     await expectCode(deleteCannedResponse(ctx, a.actor, hi.id), 'not_found');
+  });
+});
+
+describe('GET /sync: eventos por cursor, filtrados pela visibilidade', () => {
+  async function drain(actor: Actor, since = 0, limit = 200) {
+    const all: { cursor: number; type: string; event_id: string }[] = [];
+    let cursor = since;
+    for (let i = 0; i < 200; i++) {
+      const r = await listEventsSince(ctx, actor, cursor, limit);
+      all.push(...r.events);
+      cursor = r.cursor;
+      if (!r.hasMore) break;
+    }
+    return { events: all, cursor };
+  }
+
+  it('cliente novo parte do cursor atual; depois só recebe o que é novo', async () => {
+    const { accountId, owner, in1 } = await setup();
+    const start = await currentCursor(ctx, owner);
+    expect(start).toBeGreaterThan(0); // criar contas/inboxes/membros já gerou eventos
+    expect((await listEventsSince(ctx, owner, start)).events).toEqual([]);
+    await inbound(accountId, in1.id, 'v1', 'oi');
+    const next = await listEventsSince(ctx, owner, start);
+    expect(next.events.map((e) => e.type)).toEqual(['conversation.created', 'message.created']);
+    expect(next.events.map((e) => e.cursor)).toEqual([start + 1, start + 2]);
+    expect(next.cursor).toBe(start + 2);
+    expect((await listEventsSince(ctx, owner, next.cursor)).events).toEqual([]);
+  });
+
+  it('agente só recebe eventos das suas inboxes, mas o cursor avança sobre os que não vê', async () => {
+    const { accountId, owner, a, in1, in2 } = await setup();
+    const start = await currentCursor(ctx, owner);
+    await inbound(accountId, in2.id, 'v2', 'inbox 2, que o agente A não vê');
+    await inbound(accountId, in1.id, 'v1', 'inbox 1');
+    const forA = await listEventsSince(ctx, a.actor, start);
+    const bodies = await t.owner.pool.query(
+      "select payload->>'inbox_id' as i from outbox where account_id = $1 and event_type like 'message.%' order by account_seq desc limit 2",
+      [accountId],
+    );
+    expect(forA.events.every((e) => (e.payload as { inbox_id?: string }).inbox_id === in1.id)).toBe(
+      true,
+    );
+    expect(forA.events.map((e) => e.type)).toEqual(['conversation.created', 'message.created']);
+    expect(bodies.rows).toHaveLength(2);
+    // o dono vê os 4 eventos; o cursor do agente chega ao mesmo ponto final
+    const forOwner = await listEventsSince(ctx, owner, start);
+    expect(forOwner.events).toHaveLength(4);
+    expect(forA.cursor).toBe(forOwner.cursor);
+  });
+
+  it('nota interna: a equipe da inbox recebe o evento (com private=true), quem não é da inbox não', async () => {
+    const { accountId, a, b, in2 } = await setup();
+    const { conversationId } = await inbound(accountId, in2.id, 'v2', 'oi');
+    const start = await currentCursor(ctx, b.actor);
+    await sendMessage(ctx, b.actor, {
+      conversationId,
+      content: 'nota da equipe',
+      private: true,
+      clientMessageId: uuidv7(),
+    });
+    const forB = await listEventsSince(ctx, b.actor, start);
+    expect(forB.events.map((e) => (e.payload as { private?: boolean }).private)).toEqual([true]);
+    expect((await listEventsSince(ctx, a.actor, start)).events).toEqual([]);
+  });
+
+  it('pagina com limit pequeno: nada repete e nada some', async () => {
+    const { accountId, owner, in1 } = await setup();
+    const start = await currentCursor(ctx, owner);
+    for (let i = 0; i < 7; i++) await inbound(accountId, in1.id, `v${String(i)}`, `m${String(i)}`);
+    const { events } = await drain(owner, start, 3);
+    expect(events).toHaveLength(14); // 7 x (conversation.created + message.created)
+    expect(new Set(events.map((e) => e.event_id)).size).toBe(14);
+    expect(events.map((e) => e.cursor)).toEqual(
+      Array.from({ length: 14 }, (_, i) => start + 1 + i),
+    );
+  });
+
+  it('escritores concorrentes + leitor: a soma do que foi lido é exatamente o que foi gravado', async () => {
+    const { accountId, owner, in1 } = await setup();
+    const start = await currentCursor(ctx, owner);
+    let writing = true;
+    const seen = new Map<string, number>();
+    let cursor = start;
+    const reader = (async () => {
+      while (writing) {
+        const r = await listEventsSince(ctx, owner, cursor, 50);
+        for (const e of r.events) seen.set(e.event_id, e.cursor);
+        cursor = r.cursor;
+        await sleep(5);
+      }
+    })();
+    await Promise.all(
+      Array.from({ length: 6 }, (_, w) =>
+        (async () => {
+          for (let i = 0; i < 8; i++)
+            await inbound(accountId, in1.id, `w${String(w)}`, `mensagem ${String(i)}`);
+        })(),
+      ),
+    );
+    writing = false;
+    await reader;
+    for (;;) {
+      const r = await listEventsSince(ctx, owner, cursor, 500);
+      for (const e of r.events) seen.set(e.event_id, e.cursor);
+      cursor = r.cursor;
+      if (!r.hasMore) break;
+    }
+    const stored = await t.owner.pool.query(
+      'select id, account_seq from outbox where account_id = $1 and account_seq > $2 order by account_seq',
+      [accountId, start],
+    );
+    expect(seen.size).toBe(stored.rows.length);
+    expect(stored.rows.every((r: { id: string }) => seen.has(r.id))).toBe(true);
+    const seqs = stored.rows.map((r: { account_seq: string }) => Number(r.account_seq));
+    expect(seqs).toEqual(seqs.map((_, i) => (seqs[0] ?? 0) + i)); // sem lacunas
+  });
+
+  it('tipo de evento desconhecido nunca é entregue; sem permissões o usuário não vê nada; cursor inválido é recusado', async () => {
+    const { accountId, owner, in1 } = await setup();
+    const start = await currentCursor(ctx, owner);
+    await t.owner.pool.query(
+      "insert into outbox (id, account_id, aggregate_type, aggregate_id, event_type, payload) values ($1, $2, 'x', $3, 'segredo.interno', '{}')",
+      [uuidv7(), accountId, uuidv7()],
+    );
+    await inbound(accountId, in1.id, 'v1', 'oi');
+    const events = (await listEventsSince(ctx, owner, start)).events;
+    expect(events.map((e) => e.type)).toEqual(['conversation.created', 'message.created']);
+    const nobody: Actor = { ...owner, permissions: new Set() };
+    expect((await listEventsSince(ctx, nobody, start)).events).toEqual([]);
+    await expectCode(listEventsSince(ctx, owner, -1), 'invalid_input');
+    await expectCode(listEventsSince(ctx, owner, 1.5), 'invalid_input');
+  });
+
+  it('isolamento entre contas: eventos de outra conta nunca aparecem', async () => {
+    const one = await setup();
+    const two = await setup();
+    await inbound(one.accountId, one.in1.id, 'v1', 'da conta um');
+    const ev = await drain(two.owner, 0);
+    expect(ev.events.some((e) => e.type === 'message.created')).toBe(false);
   });
 });
