@@ -882,3 +882,103 @@ describe('GET /sync pela API', () => {
     expect(page.json().has_more).toBe(true);
   });
 });
+
+describe('canal API: POST /api/v1/messages', () => {
+  async function setup(scopes: string[] = ['messages:write'], channel_type = 'api') {
+    const { s: owner } = await register();
+    const me = (await call(owner, 'GET', '/auth/me')).json();
+    const inbox = (await call(owner, 'POST', '/inboxes', { name: 'CRM', channel_type })).json()
+      .inbox.id as string;
+    const made = await call(owner, 'POST', '/api-keys', { name: 'Chave CRM', scopes });
+    expect(made.statusCode, made.body).toBe(201);
+    const key = made.json().key as string;
+    return { owner, accountId: me.account.id as string, inbox, key };
+  }
+  const post = (key: string | null, body: unknown, extra: Record<string, string> = {}) =>
+    app.inject({
+      method: 'POST',
+      url: '/api/v1/messages',
+      remoteAddress: ip(),
+      headers: { ...(key ? { authorization: `Bearer ${key}` } : {}), ...extra },
+      payload: body as object,
+    });
+  const msg = (inbox: string, over: Record<string, unknown> = {}) => ({
+    inbox_id: inbox,
+    contact: { external_id: 'cli-1', name: 'Maria', email: 'maria@exemplo.com' },
+    content: 'Olá, preciso de ajuda',
+    ...over,
+  });
+
+  it('cria contato, conversa e mensagem; a conversa aparece para o painel', async () => {
+    const { owner, inbox, key } = await setup();
+    const res = await post(key, msg(inbox, { external_id: 'm-1' }));
+    expect(res.statusCode, res.body).toBe(201);
+    const b = res.json();
+    expect(b.duplicate).toBe(false);
+    const list = (await call(owner, 'GET', '/conversations')).json();
+    expect(list.items.map((c: { id: string }) => c.id)).toContain(b.conversation_id);
+  });
+
+  it('reenvio com o mesmo external_id não duplica', async () => {
+    const { inbox, key } = await setup();
+    const a = await post(key, msg(inbox, { external_id: 'm-1' }));
+    const b = await post(key, msg(inbox, { external_id: 'm-1' }));
+    expect(b.statusCode).toBe(200);
+    expect(b.json()).toMatchObject({ duplicate: true, message_id: a.json().message_id });
+  });
+
+  it('sem chave, chave malformada, inventada ou revogada: 401 igual para todas', async () => {
+    const { owner, inbox, key } = await setup();
+    const forged = `wc_${key.slice(3, 11)}_${'A'.repeat(43)}`;
+    for (const k of [null, 'lixo', forged]) {
+      const res = await post(k, msg(inbox));
+      expect(res.statusCode).toBe(401);
+      expect(res.json().error.code).toBe('api_key_invalid');
+    }
+    const id = (await call(owner, 'GET', '/api-keys')).json().items[0].id as string;
+    await call(owner, 'DELETE', `/api-keys/${id}`);
+    expect((await post(key, msg(inbox))).statusCode).toBe(401);
+  });
+
+  it('cookie de sessão não vale no canal API, e chave não vale nas rotas do painel', async () => {
+    const { owner, inbox, key } = await setup();
+    const viaCookie = await app.inject({
+      method: 'POST',
+      url: '/api/v1/messages',
+      remoteAddress: ip(),
+      headers: { cookie: owner.cookie, 'x-csrf-token': owner.csrf },
+      payload: msg(inbox),
+    });
+    expect(viaCookie.statusCode).toBe(401);
+    const panel = await app.inject({
+      method: 'GET',
+      url: '/conversations',
+      remoteAddress: ip(),
+      headers: { authorization: `Bearer ${key}` },
+    });
+    expect(panel.statusCode).toBe(401);
+  });
+
+  it('exige o escopo messages:write', async () => {
+    const { inbox, key } = await setup(['conversations:read']);
+    expect((await post(key, msg(inbox))).statusCode).toBe(403);
+  });
+
+  it('não escreve em inbox de outro canal nem de outra conta', async () => {
+    const widget = await setup(['messages:write'], 'widget');
+    expect((await post(widget.key, msg(widget.inbox))).statusCode).toBe(404);
+    const a = await setup();
+    const b = await setup();
+    expect((await post(a.key, msg(b.inbox))).statusCode).toBe(404);
+  });
+
+  it('valida o corpo (conteúdo vazio, e-mail ruim, campos a mais não mudam a conta)', async () => {
+    const { inbox, key } = await setup();
+    expect((await post(key, msg(inbox, { content: '   ' }))).statusCode).toBe(400);
+    expect(
+      (await post(key, msg(inbox, { contact: { external_id: 'x', name: 'Y', email: 'nao' } })))
+        .statusCode,
+    ).toBe(400);
+    expect((await post(key, msg(inbox, { account_id: crypto.randomUUID() }))).statusCode).toBe(201);
+  });
+});

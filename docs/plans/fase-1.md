@@ -1,6 +1,6 @@
 # Plano — Fase 1 (Núcleo de atendimento)
 
-Status: **em execução** — passos 1 (banco), 2 (contatos, inboxes, chaves de API), 3 (conversas e mensagens), 4 (`/sync` e visibilidade) e 5 (WebSocket, presença, digitação) concluídos; o passo 9 (painel) foi adiantado e já usa o tempo real. (O responsável delegou as decisões em aberto: "faça como achar melhor"; elas estão registradas abaixo.)
+Status: **em execução** — passos 1 (banco), 2 (contatos, inboxes, chaves de API), 3 (conversas e mensagens), 4 (`/sync` e visibilidade) e 5 (WebSocket, presença, digitação) e 6 (canal API de entrada) concluídos; o passo 9 (painel) foi adiantado e já usa o tempo real. (O responsável delegou as decisões em aberto: "faça como achar melhor"; elas estão registradas abaixo.)
 
 ## Escopo (seção 16 do prompt)
 

@@ -17,3 +17,5 @@ Itens fora do escopo da fase em que apareceram.
 | Testes de regressão visual (Playwright) da tela de Conversas                                                                      | Seção 10A.8          | 1         |
 | Componentes de conversa: MessageBubble, Composer, AudioWaveform, ConversationListItem                                             | Seção 10A.8          | 1         |
 | Subir `minimumReleaseAge` do pnpm de 1 para 7 dias (hoje o lockfile tem versões recentes) e remover a exceção da regra no Semgrep | CI, Fase 0           | 1         |
+
+- Rate limit do canal API por chave (hoje é por IP, 600/min): integradores atrás do mesmo NAT dividem a cota.

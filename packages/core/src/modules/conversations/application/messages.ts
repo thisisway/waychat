@@ -70,6 +70,8 @@ export interface InboundMessageInput {
   /** UUID gerado pelo cliente: reenvio com o mesmo valor não duplica. */
   clientMessageId?: string;
   contentAttributes?: Record<string, unknown>;
+  /** Restringe a inbox ao canal esperado (o canal API não pode escrever numa inbox de widget, e vice-versa). */
+  channelType?: 'api' | 'widget';
 }
 
 export interface InboundResult {
@@ -96,7 +98,8 @@ export async function receiveInboundMessage(
 
   return withTenant(ctx.db, input.accountId, async (tx) => {
     const [inbox] = await tx.select().from(inboxes).where(eq(inboxes.id, input.inboxId)).limit(1);
-    if (!inbox) throw new DomainError('not_found');
+    if (!inbox || (input.channelType && inbox.channelType !== input.channelType))
+      throw new DomainError('not_found');
     if (!inbox.enabled) throw new DomainError('inbox_disabled');
 
     await lock(tx, `in:${input.inboxId}:${input.identity.channel}:${input.identity.externalId}`);

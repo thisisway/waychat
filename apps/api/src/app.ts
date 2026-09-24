@@ -21,6 +21,7 @@ import { adminRoutes } from './routes/admin.js';
 import { contactRoutes } from './routes/contacts.js';
 import { conversationRoutes } from './routes/conversations.js';
 import { inboxRoutes } from './routes/inboxes.js';
+import { channelApiRoutes } from './routes/channel-api.js';
 import { syncRoutes } from './routes/sync.js';
 import { authRoutes } from './routes/auth.js';
 import { healthRoutes } from './routes/health.js';
@@ -66,7 +67,10 @@ export async function buildApp(deps: AppDeps): Promise<BuiltApp> {
     openapi: {
       info: { title: 'WayChat API', version: '0.0.0' },
       components: {
-        securitySchemes: { cookieAuth: { type: 'apiKey', in: 'cookie', name: 'wc_at' } },
+        securitySchemes: {
+          cookieAuth: { type: 'apiKey', in: 'cookie', name: 'wc_at' },
+          bearerAuth: { type: 'http', scheme: 'bearer', description: 'Chave de API (wc_…)' },
+        },
       },
     },
     transform: jsonSchemaTransform,
@@ -109,6 +113,7 @@ export async function buildApp(deps: AppDeps): Promise<BuiltApp> {
   contactRoutes(app, ctx);
   conversationRoutes(app, ctx);
   syncRoutes(app, ctx);
+  channelApiRoutes(app, ctx);
   app.get('/openapi.json', { config: access.public }, () => app.swagger());
 
   // requestId também no header de resposta para correlação com os logs
