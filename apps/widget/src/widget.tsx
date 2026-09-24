@@ -86,8 +86,13 @@ export function Widget({ chat, t, locale, color }: Props) {
   const toggle = (next: boolean) => {
     setOpen(next);
     chat.setOpen(next);
-    if (!next) launcher.current?.focus();
   };
+  // o foco volta ao launcher depois que o painel some (no celular o launcher fica oculto enquanto ele está aberto)
+  const wasOpen = useRef(false);
+  useEffect(() => {
+    if (wasOpen.current && !open) launcher.current?.focus();
+    wasOpen.current = open;
+  }, [open]);
   const primary = state.inbox?.primary_color ?? color;
 
   return (
@@ -140,7 +145,7 @@ function Panel({
   const first = useRef<HTMLElement | null>(null);
   useEffect(() => {
     if (list.current) list.current.scrollTop = list.current.scrollHeight;
-  }, [state.messages.length]);
+  }, [state.messages.length, state.draft.length]); // chips do rascunho encolhem a lista: rola de novo para o fim
   useEffect(() => {
     first.current?.focus();
   }, [state.needsProfile, state.status]);

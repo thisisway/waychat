@@ -362,7 +362,7 @@ function ConversationView({ id, me, onBack }: { id: string; me: Me; onBack: () =
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ block: 'end' });
-  }, [ordered.length]);
+  }, [ordered.length, files.drafts.length]); // chips do rascunho encolhem a lista: rola de novo para o fim
 
   if (conv.isError) {
     return (

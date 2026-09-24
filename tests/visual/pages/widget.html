@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Loja de teste (regressão visual)</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+      }
+      body {
+        margin: 0;
+        padding: 32px 16px;
+        font-family: sans-serif;
+        background: #fff;
+        color: #222;
+      }
+      @media (prefers-color-scheme: dark) {
+        body {
+          background: #0b0d10;
+          color: #ddd;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Loja de teste</h1>
+    <p>Página fixa que hospeda o widget; a API e o tempo real são simulados pelo Playwright.</p>
+    <!-- sem data-api: o widget usa a origem do próprio script (este servidor), onde o teste intercepta as chamadas -->
+    <script src="/waychat-widget.js" data-key="ibx_visual" data-locale="pt-BR"></script>
+  </body>
+</html>

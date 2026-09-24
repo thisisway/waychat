@@ -1,0 +1,16 @@
+{
+  "name": "@waychat/visual",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "license": "AGPL-3.0-only",
+  "description": "Regressão visual (Playwright): Storybook e widget, nos temas claro e escuro. Sem script `test` de propósito: o `turbo run test` não deve subir navegador.",
+  "scripts": {
+    "visual": "playwright test",
+    "visual:update": "playwright test --update-snapshots",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.63.0"
+  }
+}

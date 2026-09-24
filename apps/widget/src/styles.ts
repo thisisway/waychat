@@ -36,7 +36,7 @@ export const css = `
   animation: rise .2s cubic-bezier(.16,1,.3,1);
 }
 @keyframes rise { from { opacity: 0; transform: translateY(8px) scale(.98); } }
-@media (max-width: 480px) { .panel { inset: 0; width: auto; height: auto; border-radius: 0; } }
+@media (max-width: 480px) { .panel { inset: 0; width: auto; height: auto; border-radius: 0; } .wc:has(.panel) .launcher { display: none; } }
 @media (prefers-reduced-motion: reduce) { .panel { animation: none; } .launcher { transition: none; } }
 .head { display: flex; align-items: center; gap: 10px; padding: 14px 16px; background: var(--primary); color: var(--on-primary); }
 .head h2 { margin: 0; font-size: 16px; font-weight: 700; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

@@ -14,3 +14,7 @@ graphify-out/
 base-sistema/
 imgref/
 .claude/settings.local.json
+
+# Regressão visual
+tests/visual/test-results/
+tests/visual/playwright-report/
