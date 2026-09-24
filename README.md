@@ -42,7 +42,22 @@ node --env-file=.env apps/api/dist/dev-seed.js        # dados de demonstração 
 pnpm --filter @waychat/web dev                         # painel em http://localhost:5173
 ```
 
-Entre com `demo@waychat.dev` (dono) ou `ana@waychat.dev` (agente) e a senha `waychat-teste-2026!`. A senha é pública e fictícia; o comando se recusa a rodar em produção ou fora de localhost. O `PUBLIC_URL` do `.env` precisa ser `http://localhost:5173` (o Vite repassa as rotas da API, então cookies e CSRF funcionam como em produção). Enquanto o WebSocket não existe, o painel atualiza consultando a API a cada poucos segundos.
+Entre com `demo@waychat.dev` (dono) ou `ana@waychat.dev` (agente) e a senha `waychat-teste-2026!`. A senha é pública e fictícia; o comando se recusa a rodar em produção ou fora de localhost. O `PUBLIC_URL` do `.env` precisa ser `http://localhost:5173` (o Vite repassa as rotas da API, então cookies e CSRF funcionam como em produção). O painel recebe as atualizações por WebSocket (com consulta lenta como rede de segurança).
+
+### Testar o widget
+
+```bash
+node --env-file=.env apps/api/dist/dev-seed.js         # imprime a data-key da inbox "Site"
+pnpm --filter @waychat/widget dev                       # http://localhost:5174/?key=<data-key>
+```
+
+Snippet para o site do cliente (o build gera `apps/widget/dist/waychat-widget.js`):
+
+```html
+<script src="https://SEU-DOMINIO/waychat-widget.js" data-key="ibx_..." async></script>
+```
+
+Opcionais: `data-locale` (`pt-BR`, `en`, `es`), `data-color` e, para usuário logado, `data-user-id` + `data-user-hmac` — o HMAC é `HMAC-SHA256(segredo de identidade, user_id)` em hex, calculado **no servidor do cliente**. O site precisa estar em `allowedOrigins` da inbox.
 
 As portas do host são `5462` (Postgres), `6409` (Valkey) e `9030/9031` (MinIO) para não colidir com outros projetos locais. A API escuta em `3000`; `/metrics` do Prometheus em `9464` (API) e `9465` (worker), nunca expostas pelo proxy.
 

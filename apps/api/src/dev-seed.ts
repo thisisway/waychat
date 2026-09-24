@@ -7,6 +7,8 @@ import {
   createCannedResponse,
   createCtx,
   createInbox,
+  listInboxes,
+  updateInbox,
   createLabel,
   DomainError,
   listConversations,
@@ -41,6 +43,8 @@ if (
 const PASSWORD = 'waychat-teste-2026!';
 const OWNER = 'demo@waychat.dev';
 const AGENT = 'ana@waychat.dev';
+/** Página de teste do widget (`pnpm --filter @waychat/widget dev`). */
+const WIDGET_ORIGIN = 'http://localhost:5174';
 
 const handle = createDb(env.DATABASE_URL);
 const ctx: Ctx = createCtx(handle.db, coreConfigFromEnv(env));
@@ -63,6 +67,14 @@ try {
   } catch (e) {
     if (e instanceof DomainError && e.code === 'email_taken') {
       console.log(`Dados de demonstração já existem.\n  e-mail: ${OWNER}\n  senha:  ${PASSWORD}`);
+      // garante que a inbox de demonstração aceite a página de teste do widget e mostra a chave dela
+      const existing = await actorOf(OWNER);
+      const site = (await listInboxes(ctx, existing)).find((i) => i.name === 'Site');
+      if (site) {
+        await updateInbox(ctx, existing, site.id, { allowedOrigins: [WIDGET_ORIGIN] });
+        console.log(`  widget: data-key="${site.publicKey}" (página de teste: ${WIDGET_ORIGIN})`);
+      }
+      await handle.close();
       process.exit(0);
     }
     throw e;
@@ -78,7 +90,11 @@ try {
     roleId: agentRole.id,
   });
 
-  const { inbox } = await createInbox(ctx, owner, { name: 'Site', channelType: 'widget' });
+  const { inbox } = await createInbox(ctx, owner, {
+    name: 'Site',
+    channelType: 'widget',
+    allowedOrigins: [WIDGET_ORIGIN],
+  });
   await setInboxMembers(ctx, owner, inbox.id, [agentId]);
   const vip = await createLabel(ctx, owner, { name: 'VIP', color: '#1560ff' });
   await createLabel(ctx, owner, { name: 'Suporte', color: '#0a9426' });
@@ -170,7 +186,8 @@ try {
 
   const total = (await listConversations(ctx, owner, {})).items.length;
   console.log(`Dados de demonstração criados (${String(total)} conversas).`);
-  console.log(`\n  Dono:    ${OWNER}\n  Agente:  ${AGENT}\n  Senha:   ${PASSWORD}\n`);
+  console.log(`\n  Dono:    ${OWNER}\n  Agente:  ${AGENT}\n  Senha:   ${PASSWORD}`);
+  console.log(`  Widget:  data-key="${inbox.publicKey}" (página de teste: ${WIDGET_ORIGIN})\n`);
 } finally {
   await handle.close();
 }
