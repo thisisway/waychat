@@ -1,0 +1,20 @@
+{
+  "object": "whatsapp_business_account",
+  "entry": [
+    {
+      "id": "102290129340398",
+      "changes": [
+        {
+          "value": {
+            "event": "APPROVED",
+            "message_template_id": 1234567890,
+            "message_template_name": "confirmacao_pedido",
+            "message_template_language": "pt_BR",
+            "reason": "NONE"
+          },
+          "field": "message_template_status_update"
+        }
+      ]
+    }
+  ]
+}

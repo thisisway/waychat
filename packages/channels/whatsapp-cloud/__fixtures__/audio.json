@@ -1,0 +1,42 @@
+{
+  "object": "whatsapp_business_account",
+  "entry": [
+    {
+      "id": "102290129340398",
+      "changes": [
+        {
+          "value": {
+            "messaging_product": "whatsapp",
+            "metadata": {
+              "display_phone_number": "5511999990000",
+              "phone_number_id": "106540352242922"
+            },
+            "contacts": [
+              {
+                "profile": {
+                  "name": "Maria Souza"
+                },
+                "wa_id": "5511988887777"
+              }
+            ],
+            "messages": [
+              {
+                "from": "5511988887777",
+                "timestamp": "1758700000",
+                "id": "wamid.AUD001",
+                "type": "audio",
+                "audio": {
+                  "mime_type": "audio/mpeg",
+                  "sha256": "YXVkaW8=",
+                  "id": "2002002002",
+                  "voice": false
+                }
+              }
+            ]
+          },
+          "field": "messages"
+        }
+      ]
+    }
+  ]
+}

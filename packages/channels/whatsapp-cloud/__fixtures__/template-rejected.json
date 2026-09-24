@@ -1,0 +1,20 @@
+{
+  "object": "whatsapp_business_account",
+  "entry": [
+    {
+      "id": "102290129340398",
+      "changes": [
+        {
+          "value": {
+            "event": "REJECTED",
+            "message_template_id": 1234567891,
+            "message_template_name": "promo_verao",
+            "message_template_language": "pt_BR",
+            "reason": "INCORRECT_CATEGORY"
+          },
+          "field": "message_template_status_update"
+        }
+      ]
+    }
+  ]
+}
