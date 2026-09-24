@@ -35,6 +35,8 @@ export const inboundEvents = pgTable(
     externalId: text('external_id').notNull(),
     payload: jsonb('payload').notNull(),
     status: text('status').notNull().default('received'),
+    /** Motivo da falha de processamento (sem dados pessoais). */
+    error: text('error'),
     receivedAt: createdAt(),
     processedAt: tsz('processed_at'),
   },

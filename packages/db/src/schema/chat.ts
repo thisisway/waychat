@@ -2,6 +2,7 @@ import { sql } from 'drizzle-orm';
 import {
   bigint,
   boolean,
+  integer,
   check,
   index,
   jsonb,
@@ -45,12 +46,16 @@ export const inboxes = pgTable(
     /** Configuração do canal (segredos incluídos) cifrada com AES-256-GCM, AAD `inbox:<id>`. */
     configEncrypted: text('config_encrypted'),
     enabled: boolean('enabled').notNull().default(true),
+    /** Qualidade do número no canal (WhatsApp: GREEN/YELLOW/RED) e faixa de envio (TIER_1K...). */
+    qualityRating: text('quality_rating'),
+    messagingTier: text('messaging_tier'),
+    qualityCheckedAt: tsz('quality_checked_at'),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
   (t) => [
     unique('inboxes_account_name_uq').on(t.accountId, t.name),
-    check('inboxes_channel_type_ck', sql`${t.channelType} in ('api', 'widget')`),
+    check('inboxes_channel_type_ck', sql`${t.channelType} in ('api', 'widget', 'whatsapp')`),
   ],
 );
 
@@ -180,7 +185,11 @@ export const messages = pgTable(
     /** UUID gerado pelo cliente (UI otimista): reenvio com o mesmo valor devolve a mensagem já criada. */
     clientMessageId: uuid('client_message_id'),
     status: text('status').notNull().default('sent'),
+    /** Mensagem legível (em português) do motivo da falha; o código do provedor fica em `errorCode`. */
     error: text('error'),
+    errorCode: text('error_code'),
+    /** Tentativas de envio ao canal (idempotência do envio: ver ADR 0010). */
+    attempts: integer('attempts').notNull().default(0),
     createdAt: createdAt(),
   },
   (t) => [
@@ -195,7 +204,7 @@ export const messages = pgTable(
     check('messages_sender_ck', sql`${t.senderType} in ('contact', 'user', 'bot', 'system')`),
     check(
       'messages_status_ck',
-      sql`${t.status} in ('queued', 'sent', 'delivered', 'read', 'failed')`,
+      sql`${t.status} in ('queued', 'sending', 'sent', 'delivered', 'read', 'failed')`,
     ),
   ],
 );
@@ -288,11 +297,64 @@ export const attachments = pgTable(
   (t) => [
     index('attachments_message_idx').on(t.messageId),
     index('attachments_status_idx').on(t.status, t.createdAt),
-    check('attachments_uploader_ck', sql`${t.uploaderType} in ('user', 'visitor')`),
+    check('attachments_uploader_ck', sql`${t.uploaderType} in ('user', 'visitor', 'contact')`),
     check(
       'attachments_status_ck',
       sql`${t.status} in ('awaiting_upload', 'scanning', 'clean', 'infected', 'rejected')`,
     ),
     check('attachments_size_ck', sql`${t.sizeBytes} > 0`),
   ],
+);
+
+/**
+ * Templates de mensagem do canal (WhatsApp). Sincronizados com a Meta; só `approved` pode ser enviado.
+ * `components` guarda a definição original (cabeçalho, corpo com variáveis, rodapé, botões) para a pré-visualização.
+ */
+export const messageTemplates = pgTable(
+  'message_templates',
+  {
+    id: id(),
+    accountId: accountRef(),
+    inboxId: uuid('inbox_id')
+      .notNull()
+      .references(() => inboxes.id, { onDelete: 'cascade' }),
+    providerTemplateId: text('provider_template_id'),
+    name: text('name').notNull(),
+    language: text('language').notNull(),
+    category: text('category').notNull().default('UTILITY'),
+    status: text('status').notNull().default('pending'),
+    /** Motivo informado pela Meta quando rejeita ou pausa. */
+    reason: text('reason'),
+    components: jsonb('components')
+      .notNull()
+      .default(sql`'[]'::jsonb`),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [
+    unique('message_templates_inbox_name_lang_uq').on(t.inboxId, t.name, t.language),
+    check(
+      'message_templates_status_ck',
+      sql`${t.status} in ('pending', 'approved', 'rejected', 'paused', 'disabled', 'other')`,
+    ),
+  ],
+);
+
+/** Contato que pediu para não receber mais mensagens (SAIR/PARAR). Campanhas consultam esta tabela antes de enviar. */
+export const contactOptOuts = pgTable(
+  'contact_opt_outs',
+  {
+    id: id(),
+    accountId: accountRef(),
+    contactId: uuid('contact_id')
+      .notNull()
+      .references(() => contacts.id, { onDelete: 'cascade' }),
+    channel: text('channel').notNull(),
+    /** Palavra que disparou o opt-out (auditoria). */
+    keyword: text('keyword').notNull(),
+    optedOutAt: tsz('opted_out_at').notNull().defaultNow(),
+    /** Preenchido quando o contato volta a aceitar (opt-in explícito). */
+    optedInAt: tsz('opted_in_at'),
+  },
+  (t) => [unique('contact_opt_outs_uq').on(t.accountId, t.contactId, t.channel)],
 );

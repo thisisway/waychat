@@ -1,6 +1,6 @@
 # Plano — Fase 2 (WhatsApp Cloud API)
 
-Status: **em execução** — passo 1 (pacote de canais, fixtures e contrato) concluído. Base: branch `fase-1` (PR #11). Decisões abaixo foram tomadas por padrão, seguindo "faça como achar melhor"; as que dependem de você estão em "Perguntas em aberto".
+Status: **em execução** — passos 1 (pacote de canais, fixtures e contrato) e 2 (banco) concluídos. Base: branch `fase-1` (PR #11). Decisões abaixo foram tomadas por padrão, seguindo "faça como achar melhor"; as que dependem de você estão em "Perguntas em aberto".
 
 ## Escopo (seção 8 do prompt)
 
@@ -42,7 +42,7 @@ Adaptador completo da **WhatsApp Business Platform — Cloud API oficial**: cone
 ## Modelo de dados (migração `0013+`)
 
 - `inboxes.channel_type` aceita `whatsapp`; colunas `quality_rating`, `messaging_tier`, `quality_checked_at`.
-- `messages`: `status` ganha `sending`; `error_code`, `error_message`, `attempts`, `provider_message_id` (o `wamid`, indexado); tipos de conteúdo (`type`: text, image, audio, voice, video, document, sticker, location, contacts, reaction, interactive, button_reply, list_reply, template) com dados estruturados em `content_attributes`; `reply_to_id` já existe (citação).
+- `messages`: `status` ganha `sending`; `error_code` e `attempts` (o `wamid` fica em `source_id`, já único por inbox; a mensagem legível em `error`); tipos de conteúdo (`type`: text, image, audio, voice, video, document, sticker, location, contacts, reaction, interactive, button_reply, list_reply, template) com dados estruturados em `content_attributes`; `reply_to_id` já existe (citação).
 - `message_templates`, `contact_opt_outs`, `attachments.uploader_type` aceita `contact`.
 - Tudo com RLS forçada e testes de isolamento entre contas, como nas fases anteriores.
 

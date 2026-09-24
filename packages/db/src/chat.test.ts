@@ -389,3 +389,113 @@ describe('leitura por chave pública antes de existir tenant', () => {
     expect(await pool.db.select().from(apiKeys)).toHaveLength(0); // sem GUC e sem tenant: nada
   });
 });
+
+describe('tabelas do canal WhatsApp', () => {
+  const { messageTemplates, contactOptOuts } = schema;
+
+  async function seedChannel(accountId: string, tag: string) {
+    const { inbox, contact } = await seedChat(accountId, `wa-${tag}`);
+    await withTenant(pool.db, accountId, async (tx) => {
+      await tx.insert(messageTemplates).values({
+        accountId,
+        inboxId: inbox.id,
+        name: `confirmacao_${tag}`,
+        language: 'pt_BR',
+        status: 'approved',
+      });
+      await tx
+        .insert(contactOptOuts)
+        .values({ accountId, contactId: contact.id, channel: 'whatsapp', keyword: 'SAIR' });
+    });
+    return { inbox, contact };
+  }
+
+  it('templates e opt-outs são isolados por conta', async () => {
+    const a = await seedChannel(A, 'a');
+    await seedChannel(B, 'b');
+    const view = await withTenant(pool.db, A, async (tx) => ({
+      templates: await tx.select().from(messageTemplates),
+      optOuts: await tx.select().from(contactOptOuts),
+    }));
+    expect(view.templates.length).toBeGreaterThan(0);
+    for (const rows of Object.values(view)) expect(rows.every((r) => r.accountId === A)).toBe(true);
+    // escrever para outra conta falha
+    await expect(
+      withTenant(pool.db, A, (tx) =>
+        tx.insert(messageTemplates).values({
+          accountId: B,
+          inboxId: a.inbox.id,
+          name: 'invasor',
+          language: 'pt_BR',
+        }),
+      ),
+    ).rejects.toThrow();
+  });
+
+  it('o mesmo template (nome + idioma) não se repete na inbox; outro idioma pode', async () => {
+    const { inbox } = await seedChannel(A, 'dup');
+    const add = (language: string) =>
+      withTenant(pool.db, A, (tx) =>
+        tx
+          .insert(messageTemplates)
+          .values({ accountId: A, inboxId: inbox.id, name: 'confirmacao_dup', language }),
+      );
+    await expectPgError(add('pt_BR'), /message_templates_inbox_name_lang_uq|duplicate/i);
+    await add('en_US');
+  });
+
+  it('opt-out é único por contato e canal', async () => {
+    const { contact } = await seedChannel(A, 'oo');
+    await expectPgError(
+      withTenant(pool.db, A, (tx) =>
+        tx
+          .insert(contactOptOuts)
+          .values({ accountId: A, contactId: contact.id, channel: 'whatsapp', keyword: 'PARAR' }),
+      ),
+      /contact_opt_outs_uq|duplicate/i,
+    );
+  });
+
+  it('a mensagem aceita o estado "sending" e o banco recusa estados inventados', async () => {
+    const seed = await seedChat(A, 'send');
+    const insert = (status: string) =>
+      withTenant(pool.db, A, (tx) =>
+        tx.insert(messages).values({
+          accountId: A,
+          conversationId: seed.conv.id,
+          inboxId: seed.inbox.id,
+          direction: 'out',
+          senderType: 'user',
+          content: 'oi',
+          status,
+        }),
+      );
+    await insert('sending');
+    await expect(insert('enviando')).rejects.toThrow();
+  });
+
+  it('inbox aceita o canal whatsapp; anexo aceita remetente "contact"', async () => {
+    const seed = await seedChat(A, 'chan');
+    await withTenant(pool.db, A, async (tx) => {
+      await tx
+        .insert(inboxes)
+        .values({ accountId: A, name: 'zap', channelType: 'whatsapp', publicKey: 'pk_zap_chan' });
+      await tx.insert(schema.attachments).values({
+        accountId: A,
+        inboxId: seed.inbox.id,
+        uploaderType: 'contact',
+        uploaderId: seed.contact.id,
+        fileName: 'foto.jpg',
+        sizeBytes: 10,
+        storageKey: `accounts/${A}/${uuidv7()}`,
+      });
+    });
+    await expect(
+      withTenant(pool.db, A, (tx) =>
+        tx
+          .insert(inboxes)
+          .values({ accountId: A, name: 'tg', channelType: 'telegram', publicKey: 'pk_tg_chan' }),
+      ),
+    ).rejects.toThrow();
+  });
+});

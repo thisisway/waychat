@@ -92,6 +92,20 @@
       "when": 1790256809373,
       "tag": "0012_outbox_notify",
       "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1790273521822,
+      "tag": "0013_whatsapp_channel",
+      "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1790273554473,
+      "tag": "0014_whatsapp_rls",
+      "breakpoints": true
     }
   ]
 }
