@@ -1,6 +1,6 @@
 # Plano — Fase 1 (Núcleo de atendimento)
 
-Status: **em execução** — passos 1 (banco), 2 (contatos, inboxes, chaves de API), 3 (conversas e mensagens), 4 (`/sync` e visibilidade) e 5 (WebSocket, presença, digitação) 6 (canal API de entrada), 7 (anexos), 8 (widget) e a parte de latência/reconexão do 10 (aceite) concluídos; o passo 9 (painel) foi adiantado e já usa o tempo real. (O responsável delegou as decisões em aberto: "faça como achar melhor"; elas estão registradas abaixo.)
+Status: **concluída** — passos 1 a 11 entregues; os quatro critérios de aceite estão cobertos por testes (regressão visual Playwright nos dois temas, latência p95 ≈ 40 ms, recuperação após reconexão, idempotência por `client_message_id`). O CI da branch `fase-1` está verde.
 
 ## Escopo (seção 16 do prompt)
 
