@@ -144,17 +144,19 @@ describe('clamd (INSTREAM)', () => {
 });
 
 describe('S3 (MinIO)', () => {
-  let minio: StartedTestContainer;
+  let minio: StartedTestContainer | undefined;
   let store: ObjectStore;
 
   beforeAll(async () => {
-    minio = await new GenericContainer('minio/minio:latest')
+    const started = await new GenericContainer('minio/minio:latest')
       .withCommand(['server', '/data'])
       .withEnvironment({ MINIO_ROOT_USER: 'teste', MINIO_ROOT_PASSWORD: 'teste-senha-longa' })
       .withExposedPorts(9000)
-      .withWaitStrategy(Wait.forHttp('/minio/health/live', 9000))
+      .withWaitStrategy(Wait.forLogMessage(/API: http/))
+      .withStartupTimeout(180_000)
       .start();
-    const endpoint = `http://${minio.getHost()}:${String(minio.getMappedPort(9000))}`;
+    minio = started;
+    const endpoint = `http://${started.getHost()}:${String(started.getMappedPort(9000))}`;
     const admin = new S3Client({
       endpoint,
       region: 'us-east-1',
@@ -169,9 +171,9 @@ describe('S3 (MinIO)', () => {
       accessKey: 'teste',
       secretKey: 'teste-senha-longa',
     });
-  }, 120_000);
+  }, 240_000);
   afterAll(async () => {
-    await minio.stop();
+    await minio?.stop();
   });
 
   async function upload(key: string, body: Uint8Array, maxBytes = 1024) {

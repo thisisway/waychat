@@ -185,7 +185,7 @@ describe('aceite: latência de ponta a ponta', () => {
         payload: { content: `mensagem ${String(i)}`, client_message_id: randomUUID() },
         remoteAddress: `10.9.1.${String(i + 1)}`,
       });
-      const id = (res.json() as { message: { id: string } }).message.id;
+      const id = res.json().message.id as string;
       if (!seen.has(id)) {
         await new Promise<void>((resolve, reject) => {
           const timer = setTimeout(() => {
