@@ -36,6 +36,62 @@
       "when": 1790183372541,
       "tag": "0004_outbox_trace_context",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1790199727349,
+      "tag": "0005_chat_core",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1790199729805,
+      "tag": "0006_chat_rls_triggers",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1790205203616,
+      "tag": "0007_conversation_reads",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1790205207030,
+      "tag": "0008_conversation_reads_rls",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1790254460253,
+      "tag": "0009_drop_old_attachments",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1790254463195,
+      "tag": "0010_attachments",
+      "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1790254486755,
+      "tag": "0011_attachments_rls",
+      "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1790256809373,
+      "tag": "0012_outbox_notify",
+      "breakpoints": true
     }
   ]
 }

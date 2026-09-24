@@ -1,5 +1,7 @@
+import { coreConfigFromEnv, createCtx, fileServicesFromEnv, scanAttachment } from '@waychat/core';
 import { createDb } from '@waychat/db';
 import { createLogger, createRegistry, loadEnv, startMetricsServer } from '@waychat/shared';
+import { startScanWorker } from '@waychat/storage';
 import { Redis } from 'ioredis';
 import { telemetry } from './instrumentation.js';
 import { registerWorkerMetrics } from './metrics.js';
@@ -10,6 +12,7 @@ import {
   createPublisher,
   startEventsWorker,
 } from './queues.js';
+import { listenOutbox } from './notify.js';
 import { startRelay } from './relay.js';
 
 const env = loadEnv();
@@ -43,6 +46,33 @@ const relay = startRelay({
   },
 });
 
+// Acorda o relay no COMMIT de cada evento novo (NOTIFY); o polling continua como rede de segurança.
+const stopListening = listenOutbox(
+  env.DATABASE_RELAY_URL,
+  () => {
+    relay.nudge();
+  },
+  (err) => {
+    log.warn({ err }, 'escuta do NOTIFY do outbox falhou; o polling cobre até reconectar');
+  },
+);
+
+// Varredura de anexos: baixa do S3, passa pelo clamd e libera (ou apaga) o arquivo. Usa a role da aplicação (RLS).
+const appDb = createDb(env.DATABASE_URL, { max: 4 });
+const scanCtx = createCtx(
+  appDb.db,
+  coreConfigFromEnv(env),
+  undefined,
+  fileServicesFromEnv(env, () => Promise.resolve()), // o worker só consome a fila
+);
+const scanWorker = startScanWorker(
+  connection,
+  (job) => scanAttachment(scanCtx, job.accountId, job.attachmentId),
+  (err) => {
+    log.error({ err }, 'falha na varredura de anexo; nova tentativa com backoff');
+  },
+);
+
 // Fases seguintes registram aqui os handlers (automações, webhooks de saída, envio por canal...).
 const worker = startEventsWorker({
   connection,
@@ -68,8 +98,11 @@ async function shutdown(signal: string): Promise<void> {
   }, 30_000);
   timer.unref();
   try {
+    await stopListening();
     await relay.stop();
     await worker.close();
+    await scanWorker.close();
+    await appDb.close();
     await queue.close();
     await deadLetter.close();
     await relayDb.close();

@@ -15,8 +15,16 @@ import type { Redis } from 'ioredis';
 import type { Registry } from 'prom-client';
 import { registerHttpMetrics } from './metrics.js';
 import { registerAccessControl } from './plugins/access.js';
+import { attachRealtime, type EventFeed, type Realtime } from './realtime.js';
 import { registerErrorHandling } from './plugins/errors.js';
 import { adminRoutes } from './routes/admin.js';
+import { contactRoutes } from './routes/contacts.js';
+import { conversationRoutes } from './routes/conversations.js';
+import { inboxRoutes } from './routes/inboxes.js';
+import { attachmentRoutes } from './routes/attachments.js';
+import { channelApiRoutes } from './routes/channel-api.js';
+import { syncRoutes } from './routes/sync.js';
+import { widgetRoutes } from './routes/widget.js';
 import { authRoutes } from './routes/auth.js';
 import { healthRoutes } from './routes/health.js';
 import { access, type Access } from './types.js';
@@ -28,12 +36,15 @@ export interface AppDeps {
   redis?: Redis | null;
   /** Registro Prometheus; sem ele, nenhuma métrica HTTP é coletada. */
   metrics?: Registry;
+  /** Gateway WebSocket: precisa de uma fonte de eventos (Valkey em produção). Sem ela, não há tempo real. */
+  realtime?: { feed: EventFeed; revalidateEveryMs?: number };
   /** `false` silencia os logs (testes). */
   logger?: boolean;
 }
 
 export interface BuiltApp {
   app: FastifyInstance;
+  realtime: Realtime | null;
   /** Todas as rotas registradas e a forma de acesso de cada uma. */
   routeAccess: Map<string, Access>;
 }
@@ -58,7 +69,10 @@ export async function buildApp(deps: AppDeps): Promise<BuiltApp> {
     openapi: {
       info: { title: 'WayChat API', version: '0.0.0' },
       components: {
-        securitySchemes: { cookieAuth: { type: 'apiKey', in: 'cookie', name: 'wc_at' } },
+        securitySchemes: {
+          cookieAuth: { type: 'apiKey', in: 'cookie', name: 'wc_at' },
+          bearerAuth: { type: 'http', scheme: 'bearer', description: 'Chave de API (wc_…)' },
+        },
       },
     },
     transform: jsonSchemaTransform,
@@ -75,12 +89,25 @@ export async function buildApp(deps: AppDeps): Promise<BuiltApp> {
     referrerPolicy: { policy: 'no-referrer' },
     crossOriginResourcePolicy: { policy: 'same-site' },
   });
-  await app.register(cors, {
+  const panelCors = {
     origin: new URL(env.PUBLIC_URL).origin,
     credentials: true,
     methods: ['GET', 'POST', 'PATCH', 'PUT', 'DELETE'],
     allowedHeaders: ['content-type', 'x-csrf-token', 'x-request-id'],
     maxAge: 600,
+  };
+  // O widget roda no site do cliente: qualquer origem pode CHAMAR /widget/*, mas sem cookies (só Bearer).
+  // Quem pode abrir sessão é decidido pela lista de origens da inbox, dentro do caso de uso.
+  const widgetCors = {
+    origin: '*',
+    methods: ['GET', 'POST'],
+    allowedHeaders: ['content-type', 'authorization'],
+    maxAge: 600,
+  };
+  await app.register(cors, {
+    delegator: (req, cb) => {
+      cb(null, req.url.startsWith('/widget/') ? widgetCors : panelCors);
+    },
   });
   await app.register(cookie);
   await app.register(rateLimit, {
@@ -97,6 +124,13 @@ export async function buildApp(deps: AppDeps): Promise<BuiltApp> {
   healthRoutes(app, { db: ctx.db, redis: deps.redis ?? null });
   authRoutes(app, env, ctx);
   adminRoutes(app, ctx);
+  inboxRoutes(app, ctx);
+  contactRoutes(app, ctx);
+  conversationRoutes(app, ctx);
+  syncRoutes(app, ctx);
+  channelApiRoutes(app, ctx);
+  widgetRoutes(app, ctx);
+  attachmentRoutes(app, ctx);
   app.get('/openapi.json', { config: access.public }, () => app.swagger());
 
   // requestId também no header de resposta para correlação com os logs
@@ -105,5 +139,23 @@ export async function buildApp(deps: AppDeps): Promise<BuiltApp> {
     done(null, payload);
   });
 
-  return { app, routeAccess };
+  let realtime: Realtime | null = null;
+  if (deps.realtime) {
+    realtime = await attachRealtime({
+      httpServer: app.server,
+      env,
+      ctx,
+      feed: deps.realtime.feed,
+      redis: deps.redis ?? null,
+      ...(deps.realtime.revalidateEveryMs
+        ? { revalidateEveryMs: deps.realtime.revalidateEveryMs }
+        : {}),
+      ...(deps.metrics ? { metrics: deps.metrics } : {}),
+    });
+    const rt = realtime;
+    app.addHook('onClose', async () => {
+      await rt.close();
+    });
+  }
+  return { app, routeAccess, realtime };
 }

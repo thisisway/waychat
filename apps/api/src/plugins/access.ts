@@ -1,5 +1,12 @@
 import { timingSafeEqual } from 'node:crypto';
-import { assertCan, authenticate, DomainError, type Ctx } from '@waychat/core';
+import {
+  assertCan,
+  authenticate,
+  DomainError,
+  verifyApiKey,
+  verifyVisitorToken,
+  type Ctx,
+} from '@waychat/core';
 import type { Env } from '@waychat/shared';
 import type { FastifyInstance } from 'fastify';
 import { COOKIE } from '../cookies.js';
@@ -44,9 +51,27 @@ export function registerAccessControl(
     const access = req.routeOptions.config.access;
     if (!access) return; // 404 / preflight
 
+    if (access.kind === 'api_key') {
+      // Bearer não é enviado automaticamente pelo navegador, então Origin/CSRF não se aplicam aqui.
+      const m = /^Bearer (\S+)$/.exec(req.headers.authorization ?? '');
+      if (!m?.[1]) throw new DomainError('api_key_invalid');
+      const principal = await verifyApiKey(ctx, m[1]);
+      if (!principal.scopes.has(access.scope))
+        throw new DomainError('forbidden', 'escopo insuficiente');
+      req.apiKey = principal;
+      return;
+    }
+
+    if (access.kind === 'visitor') {
+      const m = /^Bearer (\S+)$/.exec(req.headers.authorization ?? '');
+      if (!m?.[1]) throw new DomainError('invalid_token');
+      req.visitor = await verifyVisitorToken(ctx, m[1]);
+      return;
+    }
+
     const unsafe = UNSAFE.has(req.method);
     const origin = req.headers.origin;
-    if (unsafe && origin && origin !== allowedOrigin) {
+    if (unsafe && origin && origin !== allowedOrigin && !req.routeOptions.config.anyOrigin) {
       throw new DomainError('forbidden', 'origem não permitida');
     }
     if (access.kind === 'public') return;

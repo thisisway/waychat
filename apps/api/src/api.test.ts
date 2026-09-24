@@ -1,5 +1,5 @@
 import { randomBytes } from 'node:crypto';
-import { createCtx, type Ctx } from '@waychat/core';
+import { createCtx, receiveInboundMessage, scanAttachment, type Ctx } from '@waychat/core';
 import { startTestDb, type TestDb } from '@waychat/db/testing';
 import { loadEnv } from '@waychat/shared';
 import type { FastifyInstance, LightMyRequestResponse } from 'fastify';
@@ -7,11 +7,14 @@ import { generateSync } from 'otplib';
 import { Registry } from 'prom-client';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { buildApp } from './app.js';
+import { PNG, testFiles } from './test-files.js';
 import type { Access } from './types.js';
 
 let t: TestDb;
 let app: FastifyInstance;
 let routeAccess: Map<string, Access>;
+let coreCtx: Ctx;
+const fileServices = testFiles();
 const registry = new Registry();
 let clock = Date.UTC(2026, 0, 15, 12, 0, 0);
 const step = (s: number) => (clock += s * 1000);
@@ -44,7 +47,7 @@ function sessionFrom(res: LightMyRequestResponse, ipAddr: string): Session {
 
 async function call(
   s: Session | null,
-  method: 'GET' | 'POST' | 'PATCH' | 'DELETE',
+  method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE',
   url: string,
   body?: unknown,
   extra: { csrf?: boolean; headers?: Record<string, string>; ip?: string } = {},
@@ -90,7 +93,7 @@ beforeAll(async () => {
     MASTER_KEY: randomBytes(32).toString('base64'),
     SESSION_SECRET: 'y'.repeat(48),
   });
-  const ctx: Ctx = createCtx(
+  coreCtx = createCtx(
     t.app.db,
     {
       sessionSecret: env.SESSION_SECRET,
@@ -102,8 +105,9 @@ beforeAll(async () => {
       issuer: 'WayChat',
     },
     () => new Date(clock),
+    fileServices.files,
   );
-  const built = await buildApp({ env, ctx, logger: false, metrics: registry });
+  const built = await buildApp({ env, ctx: coreCtx, logger: false, metrics: registry });
   app = built.app;
   routeAccess = built.routeAccess;
   await app.ready();
@@ -127,6 +131,7 @@ describe('autorização deny-by-default', () => {
         'GET /health/live',
         'GET /health/ready',
         'GET /openapi.json',
+        'POST /widget/v1/session',
         'POST /auth/login',
         'POST /auth/mfa/enroll/begin',
         'POST /auth/mfa/enroll/complete',
@@ -153,7 +158,7 @@ describe('autorização deny-by-default', () => {
   it('sem cookie de sessão toda rota protegida responde 401', async () => {
     for (const [key, a] of routeAccess) {
       if (a.kind === 'public') continue;
-      const [method, url] = key.split(' ') as ['GET' | 'POST' | 'PATCH' | 'DELETE', string];
+      const [method, url] = key.split(' ') as ['GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE', string];
       const res = await call(
         null,
         method,
@@ -531,5 +536,554 @@ describe('métricas', () => {
     expect(text).toMatch(/route="\/members\/:id"/);
     expect(text).not.toContain(me.user.id); // nenhum id de cliente vaza para as métricas
     expect(text).not.toMatch(/wc_at|wc_rt/);
+  });
+});
+
+describe('inboxes, chaves de API e contatos pela API', () => {
+  async function ownerAndAgent() {
+    const { s: owner } = await register();
+    const roles = (await call(owner, 'GET', '/roles')).json().items as {
+      id: string;
+      name: string;
+    }[];
+    const agentRole = roles.find((r) => r.name === 'Agente');
+    const email = `ag-${uniq()}@exemplo.com`;
+    await call(owner, 'POST', '/members', {
+      email,
+      name: 'Ana',
+      password: PASSWORD,
+      role_id: agentRole?.id,
+    });
+    const addr = ip();
+    const login = await call(
+      null,
+      'POST',
+      '/auth/login',
+      { email, password: PASSWORD },
+      { ip: addr },
+    );
+    return { owner, agent: sessionFrom(login, addr) };
+  }
+
+  it('inbox widget: o segredo aparece só na criação; agente lista só as suas e não cria', async () => {
+    const { owner, agent } = await ownerAndAgent();
+    const created = await call(owner, 'POST', '/inboxes', {
+      name: 'Site',
+      channel_type: 'widget',
+      welcome_message: 'Oi!',
+      allowed_origins: ['https://loja.exemplo.com'],
+    });
+    expect(created.statusCode, created.body).toBe(201);
+    const { inbox, identity_secret } = created.json();
+    expect(identity_secret).toMatch(/^[A-Za-z0-9_-]{43}$/);
+    expect(inbox.publicKey).toMatch(/^ibx_/);
+
+    const listed = await call(owner, 'GET', '/inboxes');
+    expect(listed.body).not.toContain(identity_secret);
+    expect(listed.json().items).toHaveLength(1);
+
+    expect((await call(agent, 'GET', '/inboxes')).json().items).toHaveLength(0);
+    expect(
+      (await call(agent, 'POST', '/inboxes', { name: 'Nao', channel_type: 'api' })).statusCode,
+    ).toBe(403);
+    const me = (await call(owner, 'GET', '/members')).json().items as {
+      userId: string;
+      roleName: string;
+    }[];
+    const agentId = me.find((m) => m.roleName === 'Agente')?.userId;
+    expect(
+      (await call(owner, 'PUT', `/inboxes/${inbox.id as string}/members`, { user_ids: [agentId] }))
+        .statusCode,
+    ).toBe(200);
+    expect((await call(agent, 'GET', '/inboxes')).json().items).toHaveLength(1);
+  });
+
+  it('inbox: edição, rotação de segredo, exclusão e erros com código estável', async () => {
+    const { owner } = await ownerAndAgent();
+    const { inbox } = (
+      await call(owner, 'POST', '/inboxes', { name: 'Site', channel_type: 'widget' })
+    ).json();
+    const upd = await call(owner, 'PATCH', `/inboxes/${inbox.id as string}`, {
+      primary_color: '#112233',
+      enabled: false,
+    });
+    expect(upd.json()).toMatchObject({ primaryColor: '#112233', enabled: false });
+    const rot = await call(owner, 'POST', `/inboxes/${inbox.id as string}/identity-secret/rotate`);
+    expect(rot.json().identity_secret).toMatch(/^[A-Za-z0-9_-]{43}$/);
+    const dup = await call(owner, 'POST', '/inboxes', { name: 'Site', channel_type: 'api' });
+    expect(dup.statusCode).toBe(409);
+    expect(dup.json().error.code).toBe('name_taken');
+    const bad = await call(owner, 'POST', '/inboxes', { name: 'Ok', channel_type: 'telegram' });
+    expect(bad.statusCode).toBe(400);
+    expect((await call(owner, 'DELETE', `/inboxes/${inbox.id as string}`)).statusCode).toBe(200);
+    expect((await call(owner, 'DELETE', `/inboxes/${inbox.id as string}`)).statusCode).toBe(404);
+  });
+
+  it('chaves de API: texto completo só na criação; agente sem acesso; revogação', async () => {
+    const { owner, agent } = await ownerAndAgent();
+    const created = await call(owner, 'POST', '/api-keys', {
+      name: 'CRM',
+      scopes: ['messages:write'],
+    });
+    expect(created.statusCode, created.body).toBe(201);
+    const { key, api_key } = created.json();
+    expect(key).toMatch(/^wc_[0-9a-f]{8}_[A-Za-z0-9_-]{43}$/);
+    const list = await call(owner, 'GET', '/api-keys');
+    expect(list.body).not.toContain(key.slice(12)); // o segredo (após wc_ + 8 hex + _)
+    expect(list.json().items[0].prefix).toBe(key.slice(0, 11));
+    expect((await call(agent, 'GET', '/api-keys')).statusCode).toBe(403);
+    expect(
+      (await call(agent, 'POST', '/api-keys', { name: 'Nao', scopes: ['messages:write'] }))
+        .statusCode,
+    ).toBe(403);
+    expect(
+      (await call(owner, 'POST', '/api-keys', { name: 'Ruim', scopes: ['tudo'] })).statusCode,
+    ).toBe(400);
+    expect((await call(owner, 'DELETE', `/api-keys/${api_key.id as string}`)).statusCode).toBe(200);
+    expect((await call(owner, 'GET', '/api-keys')).json().items[0].revokedAt).toBeTruthy();
+  });
+
+  it('contatos: agente cria e busca; validação de domínio dá 422; isolamento entre contas', async () => {
+    const { owner, agent } = await ownerAndAgent();
+    const created = await call(agent, 'POST', '/contacts', {
+      name: 'Maria Souza',
+      email: 'MARIA@exemplo.com',
+      phone: '(11) 90000-0000',
+    });
+    expect(created.statusCode, created.body).toBe(201);
+    expect(created.json()).toMatchObject({ email: 'maria@exemplo.com', phone: '11900000000' });
+    const found = await call(owner, 'GET', '/contacts?search=souza');
+    expect(found.json().items).toHaveLength(1);
+    const bad = await call(agent, 'POST', '/contacts', { name: 'X', phone: '123' });
+    expect(bad.statusCode).toBe(422);
+    expect(bad.json().error.code).toBe('invalid_input');
+
+    const other = await register('Outra conta');
+    expect(
+      (await call(other.s, 'GET', `/contacts/${created.json().id as string}`)).statusCode,
+    ).toBe(404);
+    expect((await call(other.s, 'GET', '/contacts')).json().items).toHaveLength(0);
+    expect(
+      (await call(agent, 'DELETE', `/contacts/${created.json().id as string}`)).statusCode,
+    ).toBe(200);
+  });
+
+  it('o OpenAPI lista as rotas novas', async () => {
+    const spec = (await call(null, 'GET', '/openapi.json')).json();
+    expect(Object.keys(spec.paths)).toEqual(
+      expect.arrayContaining(['/inboxes', '/api-keys', '/contacts', '/inboxes/{id}/members']),
+    );
+  });
+});
+
+describe('conversas pela API', () => {
+  async function team() {
+    const { s: owner } = await register();
+    const me = (await call(owner, 'GET', '/auth/me')).json();
+    const roles = (await call(owner, 'GET', '/roles')).json().items as {
+      id: string;
+      name: string;
+    }[];
+    const agentRole = roles.find((r) => r.name === 'Agente')?.id;
+    const mk = async (label: string) => {
+      const email = `${label}-${uniq()}@exemplo.com`;
+      const added = await call(owner, 'POST', '/members', {
+        email,
+        name: label,
+        password: PASSWORD,
+        role_id: agentRole,
+      });
+      const addr = ip();
+      const login = await call(
+        null,
+        'POST',
+        '/auth/login',
+        { email, password: PASSWORD },
+        { ip: addr },
+      );
+      return { s: sessionFrom(login, addr), id: added.json().user_id as string };
+    };
+    const a = await mk('agentea');
+    const b = await mk('agenteb');
+    const inbox1 = (
+      await call(owner, 'POST', '/inboxes', { name: 'Vendas', channel_type: 'widget' })
+    ).json().inbox.id as string;
+    const inbox2 = (
+      await call(owner, 'POST', '/inboxes', { name: 'Suporte', channel_type: 'widget' })
+    ).json().inbox.id as string;
+    await call(owner, 'PUT', `/inboxes/${inbox1}/members`, { user_ids: [a.id] });
+    await call(owner, 'PUT', `/inboxes/${inbox2}/members`, { user_ids: [b.id] });
+    return { owner, a, b, inbox1, inbox2, accountId: me.account.id as string };
+  }
+  const inbound = (accountId: string, inboxId: string, who: string, content: string) =>
+    receiveInboundMessage(coreCtx, {
+      accountId,
+      inboxId,
+      identity: { channel: 'widget', externalId: who, name: `Visitante ${who}` },
+      content,
+    });
+
+  it('agente lista só as suas conversas, responde com idempotência e marca como lida', async () => {
+    const { a, accountId, inbox1, inbox2 } = await team();
+    const c1 = await inbound(accountId, inbox1, 'v1', 'Olá, preciso de ajuda');
+    await inbound(accountId, inbox2, 'v2', 'conversa de outra inbox');
+
+    const list = await call(a.s, 'GET', '/conversations');
+    expect(list.statusCode, list.body).toBe(200);
+    expect(list.json().items.map((c: { id: string }) => c.id)).toEqual([c1.conversationId]);
+    expect(list.json().items[0]).toMatchObject({
+      unreadCount: 1,
+      lastMessage: 'Olá, preciso de ajuda',
+      status: 'open',
+    });
+    expect((await call(a.s, 'GET', '/conversations/counts')).json()).toEqual({
+      all: 1,
+      unassigned: 1,
+      mine: 0,
+      unread: 1,
+    });
+
+    const cid = crypto.randomUUID();
+    const url = `/conversations/${c1.conversationId}/messages`;
+    const first = await call(a.s, 'POST', url, { content: 'Já te atendo', client_message_id: cid });
+    expect(first.statusCode, first.body).toBe(201);
+    const again = await call(a.s, 'POST', url, { content: 'Já te atendo', client_message_id: cid });
+    expect(again.statusCode).toBe(200);
+    expect(again.json().duplicate).toBe(true);
+    expect(again.json().message.id).toBe(first.json().message.id);
+
+    await call(a.s, 'POST', url, {
+      content: 'nota',
+      client_message_id: crypto.randomUUID(),
+      private: true,
+    });
+    const msgs = (await call(a.s, 'GET', `${url}?limit=2`)).json();
+    expect(msgs.items).toHaveLength(2);
+    expect(msgs.nextCursor).toBeTruthy();
+    expect(msgs.items[0].private).toBe(true);
+    const older = (await call(a.s, 'GET', `${url}?before=${msgs.nextCursor as string}`)).json();
+    expect(older.items.map((m: { content: string }) => m.content)).toEqual([
+      'Olá, preciso de ajuda',
+    ]);
+
+    expect((await call(a.s, 'POST', `/conversations/${c1.conversationId}/read`)).statusCode).toBe(
+      200,
+    );
+    expect((await call(a.s, 'GET', '/conversations/counts')).json().unread).toBe(0);
+  });
+
+  it('conversa de outra inbox dá 404 em tudo (não revela que existe)', async () => {
+    const { a, accountId, inbox2 } = await team();
+    const id = (await inbound(accountId, inbox2, 'v2', 'da inbox 2')).conversationId;
+    expect((await call(a.s, 'GET', `/conversations/${id}`)).statusCode).toBe(404);
+    expect((await call(a.s, 'GET', `/conversations/${id}/messages`)).statusCode).toBe(404);
+    const send = await call(a.s, 'POST', `/conversations/${id}/messages`, {
+      content: 'x',
+      client_message_id: crypto.randomUUID(),
+    });
+    expect(send.statusCode).toBe(404);
+    expect(
+      (await call(a.s, 'PATCH', `/conversations/${id}`, { status: 'resolved' })).statusCode,
+    ).toBe(404);
+    expect((await call(a.s, 'POST', `/conversations/${id}/read`)).statusCode).toBe(404);
+    const ghost = await call(a.s, 'GET', `/conversations/${crypto.randomUUID()}`);
+    expect(ghost.statusCode).toBe(404);
+    expect(ghost.json().error.code).toBe('not_found'); // igual a uma conversa inexistente
+  });
+
+  it('atualiza status/atribuição, aplica labels e valida entrada', async () => {
+    const { owner, a, accountId, inbox1 } = await team();
+    const c = await inbound(accountId, inbox1, 'v1', 'oi');
+    const base = `/conversations/${c.conversationId}`;
+    const upd = await call(a.s, 'PATCH', base, {
+      status: 'pending',
+      priority: 'high',
+      assignee_id: a.id,
+    });
+    expect(upd.json()).toMatchObject({ status: 'pending', priority: 'high', assigneeId: a.id });
+    expect((await call(a.s, 'PATCH', base, { status: 'snoozed' })).statusCode).toBe(422);
+    expect((await call(a.s, 'PATCH', base, { status: 'inventado' })).statusCode).toBe(400);
+
+    expect((await call(a.s, 'POST', '/labels', { name: 'vip' })).statusCode).toBe(403); // agente não cria label
+    const label = (await call(owner, 'POST', '/labels', { name: 'vip', color: '#ff0000' })).json();
+    const labelId = label.id as string;
+    expect((await call(a.s, 'POST', `${base}/labels/${labelId}`)).statusCode).toBe(200);
+    expect((await call(a.s, 'GET', base)).json().labels).toHaveLength(1);
+    expect(
+      (await call(a.s, 'GET', `/conversations?label_id=${labelId}`)).json().items,
+    ).toHaveLength(1);
+    expect(
+      (await call(a.s, 'GET', '/conversations?assignee=me&status=pending')).json().items,
+    ).toHaveLength(1);
+    expect((await call(a.s, 'GET', '/conversations?unread=true')).json().items).toHaveLength(1);
+    const empty = await call(a.s, 'POST', `${base}/messages`, {
+      content: '',
+      client_message_id: crypto.randomUUID(),
+    });
+    expect(empty.statusCode).toBe(422);
+    expect((await call(a.s, 'POST', `${base}/messages`, { content: 'ok' })).statusCode).toBe(400); // sem client_message_id
+  });
+
+  it('respostas prontas: agente cria e busca por atalho', async () => {
+    const { a } = await team();
+    const created = await call(a.s, 'POST', '/canned-responses', {
+      shortcut: 'Ola',
+      content: 'Olá! Como posso ajudar?',
+    });
+    expect(created.statusCode, created.body).toBe(201);
+    expect(created.json().shortcut).toBe('ola');
+    expect(
+      (await call(a.s, 'POST', '/canned-responses', { shortcut: 'ola', content: 'outra' }))
+        .statusCode,
+    ).toBe(409);
+    expect((await call(a.s, 'GET', '/canned-responses?search=ol')).json().items).toHaveLength(1);
+    expect(
+      (await call(a.s, 'DELETE', `/canned-responses/${created.json().id as string}`)).statusCode,
+    ).toBe(200);
+  });
+});
+
+describe('GET /sync pela API', () => {
+  it('cliente novo recebe o cursor; depois recebe só os eventos novos que pode ver', async () => {
+    const { s: owner } = await register();
+    const me = (await call(owner, 'GET', '/auth/me')).json();
+    const inbox = (
+      await call(owner, 'POST', '/inboxes', { name: 'Site', channel_type: 'widget' })
+    ).json().inbox.id as string;
+    const boot = await call(owner, 'GET', '/sync');
+    expect(boot.statusCode, boot.body).toBe(200);
+    expect(boot.json()).toMatchObject({ events: [], has_more: false });
+    const start = boot.json().cursor as number;
+    expect(start).toBeGreaterThan(0);
+
+    await receiveInboundMessage(coreCtx, {
+      accountId: me.account.id,
+      inboxId: inbox,
+      identity: { channel: 'widget', externalId: 'v1', name: 'Visitante' },
+      content: 'texto que nunca vai no evento',
+    });
+    const next = await call(owner, 'GET', `/sync?since=${String(start)}`);
+    const body = next.json();
+    expect(body.events.map((e: { type: string }) => e.type)).toEqual([
+      'conversation.created',
+      'message.created',
+    ]);
+    expect(body.events[0]).toMatchObject({ account_id: me.account.id, cursor: start + 1 });
+    expect(JSON.stringify(body)).not.toContain('nunca vai no evento');
+    expect(body.cursor).toBe(start + 2);
+    expect((await call(owner, 'GET', `/sync?since=${String(body.cursor)}`)).json().events).toEqual(
+      [],
+    );
+  });
+
+  it('valida os parâmetros e respeita o limite com has_more', async () => {
+    const { s: owner } = await register();
+    expect((await call(owner, 'GET', '/sync?since=-1')).statusCode).toBe(400);
+    expect((await call(owner, 'GET', '/sync?since=abc')).statusCode).toBe(400);
+    expect((await call(owner, 'GET', '/sync?since=0&limit=501')).statusCode).toBe(400);
+    const page = await call(owner, 'GET', '/sync?since=0&limit=1');
+    expect(page.json().events).toHaveLength(1);
+    expect(page.json().has_more).toBe(true);
+  });
+});
+
+describe('canal API: POST /api/v1/messages', () => {
+  async function setup(scopes: string[] = ['messages:write'], channel_type = 'api') {
+    const { s: owner } = await register();
+    const me = (await call(owner, 'GET', '/auth/me')).json();
+    const inbox = (await call(owner, 'POST', '/inboxes', { name: 'CRM', channel_type })).json()
+      .inbox.id as string;
+    const made = await call(owner, 'POST', '/api-keys', { name: 'Chave CRM', scopes });
+    expect(made.statusCode, made.body).toBe(201);
+    const key = made.json().key as string;
+    return { owner, accountId: me.account.id as string, inbox, key };
+  }
+  const post = (key: string | null, body: unknown, extra: Record<string, string> = {}) =>
+    app.inject({
+      method: 'POST',
+      url: '/api/v1/messages',
+      remoteAddress: ip(),
+      headers: { ...(key ? { authorization: `Bearer ${key}` } : {}), ...extra },
+      payload: body as object,
+    });
+  const msg = (inbox: string, over: Record<string, unknown> = {}) => ({
+    inbox_id: inbox,
+    contact: { external_id: 'cli-1', name: 'Maria', email: 'maria@exemplo.com' },
+    content: 'Olá, preciso de ajuda',
+    ...over,
+  });
+
+  it('cria contato, conversa e mensagem; a conversa aparece para o painel', async () => {
+    const { owner, inbox, key } = await setup();
+    const res = await post(key, msg(inbox, { external_id: 'm-1' }));
+    expect(res.statusCode, res.body).toBe(201);
+    const b = res.json();
+    expect(b.duplicate).toBe(false);
+    const list = (await call(owner, 'GET', '/conversations')).json();
+    expect(list.items.map((c: { id: string }) => c.id)).toContain(b.conversation_id);
+  });
+
+  it('reenvio com o mesmo external_id não duplica', async () => {
+    const { inbox, key } = await setup();
+    const a = await post(key, msg(inbox, { external_id: 'm-1' }));
+    const b = await post(key, msg(inbox, { external_id: 'm-1' }));
+    expect(b.statusCode).toBe(200);
+    expect(b.json()).toMatchObject({ duplicate: true, message_id: a.json().message_id });
+  });
+
+  it('sem chave, chave malformada, inventada ou revogada: 401 igual para todas', async () => {
+    const { owner, inbox, key } = await setup();
+    const forged = `wc_${key.slice(3, 11)}_${'A'.repeat(43)}`;
+    for (const k of [null, 'lixo', forged]) {
+      const res = await post(k, msg(inbox));
+      expect(res.statusCode).toBe(401);
+      expect(res.json().error.code).toBe('api_key_invalid');
+    }
+    const id = (await call(owner, 'GET', '/api-keys')).json().items[0].id as string;
+    await call(owner, 'DELETE', `/api-keys/${id}`);
+    expect((await post(key, msg(inbox))).statusCode).toBe(401);
+  });
+
+  it('cookie de sessão não vale no canal API, e chave não vale nas rotas do painel', async () => {
+    const { owner, inbox, key } = await setup();
+    const viaCookie = await app.inject({
+      method: 'POST',
+      url: '/api/v1/messages',
+      remoteAddress: ip(),
+      headers: { cookie: owner.cookie, 'x-csrf-token': owner.csrf },
+      payload: msg(inbox),
+    });
+    expect(viaCookie.statusCode).toBe(401);
+    const panel = await app.inject({
+      method: 'GET',
+      url: '/conversations',
+      remoteAddress: ip(),
+      headers: { authorization: `Bearer ${key}` },
+    });
+    expect(panel.statusCode).toBe(401);
+  });
+
+  it('exige o escopo messages:write', async () => {
+    const { inbox, key } = await setup(['conversations:read']);
+    expect((await post(key, msg(inbox))).statusCode).toBe(403);
+  });
+
+  it('não escreve em inbox de outro canal nem de outra conta', async () => {
+    const widget = await setup(['messages:write'], 'widget');
+    expect((await post(widget.key, msg(widget.inbox))).statusCode).toBe(404);
+    const a = await setup();
+    const b = await setup();
+    expect((await post(a.key, msg(b.inbox))).statusCode).toBe(404);
+  });
+
+  it('valida o corpo (conteúdo vazio, e-mail ruim, campos a mais não mudam a conta)', async () => {
+    const { inbox, key } = await setup();
+    expect((await post(key, msg(inbox, { content: '   ' }))).statusCode).toBe(400);
+    expect(
+      (await post(key, msg(inbox, { contact: { external_id: 'x', name: 'Y', email: 'nao' } })))
+        .statusCode,
+    ).toBe(400);
+    expect((await post(key, msg(inbox, { account_id: crypto.randomUUID() }))).statusCode).toBe(201);
+  });
+});
+
+describe('anexos no painel', () => {
+  async function conversa() {
+    const { s: owner } = await register();
+    const me = (await call(owner, 'GET', '/auth/me')).json();
+    const inbox = (
+      await call(owner, 'POST', '/inboxes', { name: 'Site', channel_type: 'widget' })
+    ).json().inbox.id as string;
+    const r = await receiveInboundMessage(coreCtx, {
+      accountId: me.account.id,
+      inboxId: inbox,
+      identity: { channel: 'widget', externalId: 'v1', name: 'Visitante' },
+      content: 'oi',
+    });
+    return { owner, accountId: me.account.id as string, conversationId: r.conversationId };
+  }
+
+  /** Pede a URL, "envia" o arquivo, conclui e roda a varredura (o que o worker faria). */
+  async function anexoLimpo(c: Awaited<ReturnType<typeof conversa>>, name = 'foto.png') {
+    const req = await call(c.owner, 'POST', `/conversations/${c.conversationId}/attachments`, {
+      file_name: name,
+      size: PNG.length,
+    });
+    expect(req.statusCode, req.body).toBe(201);
+    const id = req.json().attachment.id as string;
+    fileServices.store.objects.set(fileServices.store.lastKey, PNG);
+    const done = await call(c.owner, 'POST', `/attachments/${id}/complete`);
+    expect(done.json().attachment.status).toBe('scanning');
+    await scanAttachment(coreCtx, c.accountId, id);
+    return id;
+  }
+
+  it('fluxo completo: pedir URL, enviar, concluir, varrer, mandar na mensagem e baixar', async () => {
+    const c = await conversa();
+    const id = await anexoLimpo(c);
+    const sent = await call(c.owner, 'POST', `/conversations/${c.conversationId}/messages`, {
+      content: '',
+      attachment_ids: [id],
+      client_message_id: crypto.randomUUID(),
+    });
+    expect(sent.statusCode, sent.body).toBe(201);
+    expect(sent.json().message.attachments).toMatchObject([
+      { id, fileName: 'foto.png', contentType: 'image/png', status: 'clean' },
+    ]);
+    const list = await call(c.owner, 'GET', `/conversations/${c.conversationId}/messages`);
+    expect(list.json().items[0].attachments).toHaveLength(1);
+    const dl = await call(c.owner, 'GET', `/attachments/${id}/download`);
+    expect(dl.statusCode).toBe(200);
+    expect(dl.json().url).toContain('foto.png');
+  });
+
+  it('extensão proibida, corpo ruim e conversa inexistente são recusados', async () => {
+    const c = await conversa();
+    const url = `/conversations/${c.conversationId}/attachments`;
+    expect((await call(c.owner, 'POST', url, { file_name: 'v.exe', size: 5 })).statusCode).toBe(
+      422,
+    );
+    expect((await call(c.owner, 'POST', url, { file_name: 'a.png' })).statusCode).toBe(400);
+    const outra = `/conversations/${crypto.randomUUID()}/attachments`;
+    expect((await call(c.owner, 'POST', outra, { file_name: 'a.png', size: 5 })).statusCode).toBe(
+      404,
+    );
+  });
+
+  it('anexo de outra conta responde 404 no download e na conclusão', async () => {
+    const a = await conversa();
+    const b = await conversa();
+    const id = await anexoLimpo(a);
+    await call(a.owner, 'POST', `/conversations/${a.conversationId}/messages`, {
+      content: 'x',
+      attachment_ids: [id],
+      client_message_id: crypto.randomUUID(),
+    });
+    expect((await call(b.owner, 'GET', `/attachments/${id}/download`)).statusCode).toBe(404);
+    expect((await call(b.owner, 'POST', `/attachments/${id}/complete`)).statusCode).toBe(404);
+  });
+
+  it('anexo ainda sem mensagem não tem download para o painel (só depois de enviado)', async () => {
+    const c = await conversa();
+    const id = await anexoLimpo(c);
+    expect((await call(c.owner, 'GET', `/attachments/${id}/download`)).statusCode).toBe(404);
+  });
+
+  it('não aceita anexo inventado nem sem a varredura terminar', async () => {
+    const c = await conversa();
+    const send = (ids: string[]) =>
+      call(c.owner, 'POST', `/conversations/${c.conversationId}/messages`, {
+        content: 'x',
+        attachment_ids: ids,
+        client_message_id: crypto.randomUUID(),
+      });
+    expect((await send([crypto.randomUUID()])).statusCode).toBe(422);
+    const req = await call(c.owner, 'POST', `/conversations/${c.conversationId}/attachments`, {
+      file_name: 'a.png',
+      size: 5,
+    });
+    fileServices.store.objects.set(fileServices.store.lastKey, PNG);
+    await call(c.owner, 'POST', `/attachments/${req.json().attachment.id as string}/complete`);
+    expect((await send([req.json().attachment.id as string])).statusCode).toBe(422); // ainda "scanning"
   });
 });

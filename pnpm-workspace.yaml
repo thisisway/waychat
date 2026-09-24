@@ -1,6 +1,7 @@
 packages:
   - apps/*
   - packages/*
+  - tests/*
 
 # Scripts de build de dependências: só o necessário (esbuild). Nativos opcionais do dockerode/protobufjs ficam bloqueados.
 allowBuilds:

@@ -6,7 +6,7 @@ type IconType = ComponentType<{ className?: string }>;
 export interface SidebarNavItemProps {
   icon: IconType;
   label: string;
-  count?: number;
+  count?: number | undefined;
   active?: boolean;
   onClick?: () => void;
 }

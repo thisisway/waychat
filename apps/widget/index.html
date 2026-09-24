@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Loja de teste — widget WayChat</title>
+    <style>
+      body {
+        font-family: Georgia, serif;
+        max-width: 640px;
+        margin: 64px auto;
+        padding: 0 16px;
+        color: #222;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Loja de teste</h1>
+    <p>Página que simula o site de um cliente. O botão de chat fica no canto inferior direito.</p>
+    <!-- Em desenvolvimento: troque data-key pela chave impressa por `pnpm --filter @waychat/api seed:dev`
+         (ou passe ?key=... na URL desta página). -->
+    <script>
+      const key = new URLSearchParams(location.search).get('key') ?? 'ibx_troque-pela-chave';
+      const s = document.createElement('script');
+      s.type = 'module';
+      s.src = '/src/main.tsx';
+      s.dataset.key = key;
+      s.dataset.api = 'http://127.0.0.1:3000';
+      document.body.append(s);
+    </script>
+  </body>
+</html>

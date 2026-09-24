@@ -15,9 +15,9 @@ describe('catálogo de permissões', () => {
 
   it('Owner tem tudo; Agente não administra nada', () => {
     expect([...SYSTEM_ROLES.Owner].sort()).toEqual([...PERMISSIONS].sort());
-    expect(
-      SYSTEM_ROLES.Agente.some((p) => p.endsWith(':manage') && p !== 'sessions:manage_own'),
-    ).toBe(false);
+    // o agente edita contatos, mas não administra conta, membros, papéis, chaves nem inboxes
+    const manage = SYSTEM_ROLES.Agente.filter((p) => p.endsWith(':manage')).sort();
+    expect(manage).toEqual(['canned_responses:manage', 'contacts:manage', 'conversations:manage']);
     expect(SYSTEM_ROLES.Agente).not.toContain('members:manage');
   });
 });

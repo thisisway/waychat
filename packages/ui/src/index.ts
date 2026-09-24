@@ -20,3 +20,16 @@ export {
   type SidebarNavItemProps,
   type TopNavTabProps,
 } from './components/Nav.js';
+export {
+  AttachmentChip,
+  formatBytes,
+  MessageBubble,
+  ConversationListItem,
+  Composer,
+  type AttachmentItem,
+  type MessageBubbleProps,
+  type MessageStatus,
+  type ConversationListItemProps,
+  type ComposerProps,
+  type CannedItem,
+} from './components/Chat.js';

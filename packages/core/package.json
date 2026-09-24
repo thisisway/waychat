@@ -19,6 +19,7 @@
     "@opentelemetry/api": "^1.9.1",
     "@waychat/db": "workspace:*",
     "@waychat/shared": "workspace:*",
+    "@waychat/storage": "workspace:*",
     "drizzle-orm": "^0.45.3",
     "jose": "^6.2.12",
     "otplib": "^13.5.0",

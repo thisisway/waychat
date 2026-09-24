@@ -29,6 +29,15 @@ const HTTP: Record<DomainErrorCode, { status: number; message: string }> = {
     message: 'Senha fraca: use de 12 a 128 caracteres, sem repetição nem o seu e-mail.',
   },
   invalid_permission: { status: 422, message: 'Permissão desconhecida.' },
+  invalid_input: { status: 422, message: 'Dados inválidos.' },
+  inbox_in_use: {
+    status: 409,
+    message: 'A caixa de entrada tem conversas: desative-a em vez de excluir.',
+  },
+  contact_in_use: { status: 409, message: 'O contato tem conversas e não pode ser excluído.' },
+  api_key_invalid: { status: 401, message: 'Chave de API inválida.' },
+  inbox_disabled: { status: 403, message: 'Esta caixa de entrada está desativada.' },
+  rate_limited: { status: 429, message: 'Muitas solicitações. Tente novamente mais tarde.' },
 };
 
 /** Traduz erros para `{ error: { code, message, request_id } }`. Erros inesperados nunca vazam detalhes ao cliente. */

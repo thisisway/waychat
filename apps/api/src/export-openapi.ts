@@ -23,6 +23,7 @@ const env = {
   S3_SECRET_KEY: 'x',
   MASTER_KEY: Buffer.alloc(32).toString('base64'),
   SESSION_SECRET: 'x'.repeat(32),
+  CLAMAV_PORT: 3310,
 } as const;
 
 const handle = createDb(env.DATABASE_URL, { max: 1 });

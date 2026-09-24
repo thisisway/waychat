@@ -8,9 +8,12 @@ import {
   Badge,
   Button,
   Chip,
+  Composer,
+  ConversationListItem,
   IconButton,
   InfoCard,
   Input,
+  MessageBubble,
   NoteCard,
   Search,
   SidebarNavItem,
@@ -210,5 +213,169 @@ describe('tema', () => {
     vi.stubGlobal('matchMedia', () => ({ matches: true }));
     expect(resolveTheme()).toBe('dark');
     vi.unstubAllGlobals();
+  });
+});
+
+describe('componentes de conversa', () => {
+  it('MessageBubble: recebida mostra autor; enviada mostra origem e status; nota mostra o rótulo', () => {
+    const { rerender } = render(
+      <MessageBubble direction="in" author="Brandon" time="11:18">
+        Olá
+      </MessageBubble>,
+    );
+    expect(screen.getByText('Brandon')).toBeVisible();
+    rerender(
+      <MessageBubble direction="out" time="11:19" via="via Site" status="read">
+        Oi!
+      </MessageBubble>,
+    );
+    expect(screen.getByText('via Site')).toBeVisible();
+    expect(screen.getByText('Lida')).toBeInTheDocument(); // status também por texto, não só ícone
+    rerender(
+      <MessageBubble direction="out" time="11:20" note>
+        segredo
+      </MessageBubble>,
+    );
+    expect(screen.getByText('Nota interna')).toBeVisible();
+  });
+
+  it('ConversationListItem: mostra não lidas e marca a selecionada', () => {
+    const fn = vi.fn();
+    render(
+      <ConversationListItem
+        name="Loren Quigley"
+        preview="Awesome!"
+        time="11:29"
+        unread={2}
+        selected
+        onClick={fn}
+      />,
+    );
+    const b = screen.getByRole('button', { name: /Loren Quigley/ });
+    expect(b).toHaveAttribute('aria-current', 'true');
+    expect(screen.getByLabelText('2 não lidas')).toBeVisible();
+    fireEvent.click(b);
+    expect(fn).toHaveBeenCalledOnce();
+  });
+
+  it('Composer: Enter envia, Shift+Enter não; vazio não envia; nota interna muda o modo', async () => {
+    const onSend = vi.fn().mockResolvedValue(true);
+    render(<Composer onSend={onSend} />);
+    const box = screen.getByLabelText('Escrever mensagem');
+    fireEvent.keyDown(box, { key: 'Enter' });
+    expect(onSend).not.toHaveBeenCalled(); // vazio
+    fireEvent.change(box, { target: { value: 'oi' } });
+    fireEvent.keyDown(box, { key: 'Enter', shiftKey: true });
+    expect(onSend).not.toHaveBeenCalled();
+    fireEvent.keyDown(box, { key: 'Enter' });
+    await vi.waitFor(() => {
+      expect(onSend).toHaveBeenCalledWith('oi', 'reply');
+    });
+    await vi.waitFor(() => {
+      expect(box).toHaveValue('');
+    });
+    fireEvent.click(screen.getByRole('tab', { name: 'Nota interna' }));
+    const note = screen.getByLabelText('Escrever nota interna');
+    fireEvent.change(note, { target: { value: 'so equipe' } });
+    fireEvent.keyDown(note, { key: 'Enter' });
+    await vi.waitFor(() => {
+      expect(onSend).toHaveBeenLastCalledWith('so equipe', 'note');
+    });
+  });
+
+  it('Composer: se o envio falha o texto permanece; "/" sugere respostas prontas e Tab escolhe', async () => {
+    const failing = vi.fn().mockResolvedValue(false);
+    const { unmount } = render(<Composer onSend={failing} />);
+    const box = screen.getByLabelText('Escrever mensagem');
+    fireEvent.change(box, { target: { value: 'tentando' } });
+    fireEvent.keyDown(box, { key: 'Enter' });
+    await vi.waitFor(() => {
+      expect(failing).toHaveBeenCalled();
+    });
+    expect(box).toHaveValue('tentando');
+    unmount();
+
+    render(
+      <Composer
+        onSend={vi.fn()}
+        canned={[
+          { shortcut: 'ola', content: 'Olá! Como posso ajudar?' },
+          { shortcut: 'obrigado', content: 'Por nada!' },
+        ]}
+      />,
+    );
+    const b2 = screen.getByLabelText('Escrever mensagem');
+    fireEvent.change(b2, { target: { value: '/ol' } });
+    expect(screen.getByRole('listbox', { name: 'Respostas prontas' })).toBeVisible();
+    expect(screen.getAllByRole('option')).toHaveLength(1);
+    fireEvent.keyDown(b2, { key: 'Tab' });
+    expect(b2).toHaveValue('Olá! Como posso ajudar?');
+  });
+});
+
+describe('anexos no chat', () => {
+  const pronto = { id: 'a1', name: 'proposta.pdf', size: 2_400_000, status: 'ready' as const };
+
+  it('MessageBubble lista os arquivos e avisa qual foi aberto', () => {
+    const onOpen = vi.fn();
+    render(
+      <MessageBubble
+        direction="in"
+        time="10:00"
+        attachments={[{ id: 'a1', name: 'proposta.pdf', size: 2_400_000 }]}
+        onOpenAttachment={onOpen}
+      >
+        Segue
+      </MessageBubble>,
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Baixar proposta.pdf' }));
+    expect(onOpen).toHaveBeenCalledWith('a1');
+    expect(screen.getByText('2,3 MB')).toBeInTheDocument();
+  });
+
+  it('Composer: com arquivo pronto envia mesmo sem texto', () => {
+    const onSend = vi.fn(() => true);
+    render(<Composer onSend={onSend} drafts={[pronto]} onAttach={vi.fn()} />);
+    const send = screen.getByRole('button', { name: 'Enviar mensagem' });
+    expect(send).toBeEnabled();
+    fireEvent.click(send);
+    expect(onSend).toHaveBeenCalledWith('', 'reply');
+  });
+
+  it('Composer: enquanto o arquivo sobe ou é verificado, não envia', () => {
+    const onSend = vi.fn(() => true);
+    render(
+      <Composer onSend={onSend} onAttach={vi.fn()} drafts={[{ ...pronto, status: 'scanning' }]} />,
+    );
+    fireEvent.change(screen.getByLabelText('Escrever mensagem'), { target: { value: 'oi' } });
+    expect(screen.getByRole('button', { name: 'Enviar mensagem' })).toBeDisabled();
+    expect(screen.getByText('Verificando…')).toBeInTheDocument();
+  });
+
+  it('Composer: escolher arquivos chama onAttach; remover chama onRemoveDraft; nota interna esconde o clipe', () => {
+    const onAttach = vi.fn();
+    const onRemove = vi.fn();
+    render(
+      <Composer onSend={vi.fn()} onAttach={onAttach} onRemoveDraft={onRemove} drafts={[pronto]} />,
+    );
+    const file = new File(['x'], 'a.png', { type: 'image/png' });
+    fireEvent.change(screen.getByLabelText('Selecionar arquivos'), { target: { files: [file] } });
+    expect(onAttach).toHaveBeenCalledWith([file]);
+    fireEvent.click(screen.getByRole('button', { name: 'Remover proposta.pdf' }));
+    expect(onRemove).toHaveBeenCalledWith('a1');
+    fireEvent.click(screen.getByRole('tab', { name: 'Nota interna' }));
+    expect(screen.queryByRole('button', { name: 'Anexar arquivo' })).not.toBeInTheDocument();
+    expect(screen.queryByText('proposta.pdf')).not.toBeInTheDocument();
+  });
+
+  it('chip de erro mostra o motivo', () => {
+    render(
+      <Composer
+        onSend={vi.fn()}
+        onAttach={vi.fn()}
+        drafts={[{ id: 'x', name: 'v.exe', size: 5, status: 'error', error: 'Tipo não permitido' }]}
+      />,
+    );
+    expect(screen.getByText('Tipo não permitido')).toBeInTheDocument();
   });
 });

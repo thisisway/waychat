@@ -29,4 +29,10 @@ export type DomainErrorCode =
   | 'role_in_use'
   | 'last_owner'
   | 'invalid_permission'
-  | 'name_taken';
+  | 'name_taken'
+  | 'invalid_input'
+  | 'inbox_in_use'
+  | 'contact_in_use'
+  | 'api_key_invalid'
+  | 'inbox_disabled'
+  | 'rate_limited';

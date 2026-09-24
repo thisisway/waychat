@@ -29,8 +29,9 @@ jobs:
       - run: pnpm build
       - run: pnpm lint
       - run: pnpm typecheck
-      # Os testes usam Testcontainers (Postgres e Valkey reais); o runner já tem Docker.
-      - run: pnpm test
+      # Os testes usam Testcontainers (Postgres e Valkey reais); o runner já tem Docker. Um pacote por vez:
+      # subir vários bancos em paralelo num runner pequeno estoura os timeouts sem indicar defeito real.
+      - run: pnpm exec turbo run test --concurrency=1
       - name: Auditoria de dependências
         run: pnpm audit --audit-level=high
 
@@ -70,3 +71,29 @@ jobs:
       - name: Trivy (HIGH e CRITICAL falham o build)
         run: |
           docker run --rm -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy:latest             image --severity HIGH,CRITICAL --ignore-unfixed --exit-code 1 waychat-${{ matrix.app }}:ci
+
+  visual:
+    name: Regressão visual (Playwright)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    # Mesma imagem usada para gerar as linhas de base (tests/visual/README.md): versão = @playwright/test.
+    container:
+      image: mcr.microsoft.com/playwright:v1.63.0-noble
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4 # versão vem do campo packageManager
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @waychat/ui build-storybook
+      - run: pnpm --filter @waychat/widget build
+      - run: pnpm --filter @waychat/web build
+      - run: pnpm --filter @waychat/visual visual
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: failure()
+        with:
+          name: visual-test-results
+          path: tests/visual/test-results
+          retention-days: 7

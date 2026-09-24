@@ -22,7 +22,7 @@ export interface AvatarProps extends VariantProps<typeof avatar> {
   name: string;
   src?: string | undefined;
   /** Bolinha de presença. O estado também é dito a leitores de tela. */
-  presence?: Presence;
+  presence?: Presence | undefined;
   className?: string;
 }
 

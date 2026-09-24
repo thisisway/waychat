@@ -23,6 +23,28 @@ export const eventPayloadSchemas = {
   'member.added': z.object({ user_id: z.uuid(), role_id: z.uuid() }),
   'member.role_changed': z.object({ user_id: z.uuid(), role_id: z.uuid() }),
   'member.removed': z.object({ user_id: z.uuid() }),
+  // Só ids: quem precisa dos dados busca pela API, já com a checagem de permissão (nada de PII no evento).
+  'inbox.created': z.object({ inbox_id: z.uuid() }),
+  'inbox.updated': z.object({ inbox_id: z.uuid() }),
+  'inbox.deleted': z.object({ inbox_id: z.uuid() }),
+  'contact.created': z.object({ contact_id: z.uuid() }),
+  'contact.updated': z.object({ contact_id: z.uuid() }),
+  'contact.deleted': z.object({ contact_id: z.uuid() }),
+  // `inbox_id` permite ao gateway filtrar por visibilidade sem consultar o banco; `private` marca nota interna
+  // (nunca vai para o cliente final). Sem conteúdo de mensagem nem dados pessoais.
+  'conversation.created': z.object({ conversation_id: z.uuid(), inbox_id: z.uuid() }),
+  'conversation.updated': z.object({
+    conversation_id: z.uuid(),
+    inbox_id: z.uuid(),
+    fields: z.array(z.string()),
+  }),
+  'message.created': z.object({
+    message_id: z.uuid(),
+    conversation_id: z.uuid(),
+    inbox_id: z.uuid(),
+    private: z.boolean(),
+    direction: z.enum(['in', 'out']),
+  }),
 } as const;
 
 export type EventType = keyof typeof eventPayloadSchemas;

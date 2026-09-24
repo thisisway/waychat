@@ -19,9 +19,11 @@ import {
   Badge,
   Button,
   Chip,
+  Composer,
   IconButton,
   InfoCard,
   Input,
+  MessageBubble,
   NoteCard,
   Search,
   SidebarNavItem,
@@ -154,6 +156,66 @@ export const PainelLateral: Story = {
           </div>
         </AccordionSection>
       </Accordion>
+    </div>
+  ),
+};
+
+export const MensagensComAnexos: Story = {
+  render: () => (
+    <div className="flex max-w-lg flex-col gap-4 rounded-panel bg-chat p-4">
+      <MessageBubble direction="in" author="Loren Quigley" time="14:02">
+        Segue o comprovante que você pediu.
+      </MessageBubble>
+      <MessageBubble
+        direction="out"
+        author="Ana"
+        via="via Widget"
+        time="14:05"
+        status="read"
+        attachments={[
+          { id: 'a1', name: 'comprovante-marco.pdf', size: 245_760 },
+          {
+            id: 'a2',
+            name: 'foto-do-produto-com-nome-muito-longo-para-truncar.png',
+            size: 2_411_724,
+          },
+        ]}
+        onOpenAttachment={() => undefined}
+      >
+        Recebido, obrigada!
+      </MessageBubble>
+      <MessageBubble
+        direction="in"
+        author="Loren Quigley"
+        time="14:06"
+        attachments={[{ id: 'a3', name: 'log.txt', size: 812 }]}
+      >
+        {''}
+      </MessageBubble>
+    </div>
+  ),
+};
+
+export const CompositorComAnexos: Story = {
+  render: () => (
+    <div className="max-w-lg">
+      <Composer
+        channelLabel="Widget"
+        onSend={() => false}
+        onAttach={() => undefined}
+        onRemoveDraft={() => undefined}
+        drafts={[
+          { id: 'd1', name: 'contrato.pdf', size: 1_048_576, status: 'ready' },
+          { id: 'd2', name: 'video-demonstracao.mp4', size: 8_388_608, status: 'scanning' },
+          {
+            id: 'd3',
+            name: 'planilha.exe',
+            size: 4096,
+            status: 'error',
+            error: 'Tipo não permitido',
+          },
+        ]}
+      />
     </div>
   ),
 };

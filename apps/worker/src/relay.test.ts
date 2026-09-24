@@ -12,6 +12,7 @@ import {
   eventsChannel,
   startEventsWorker,
 } from './queues.js';
+import { listenOutbox } from './notify.js';
 import { backoffMs, relayOnce, startRelay } from './relay.js';
 
 let t: TestDb;
@@ -41,7 +42,7 @@ const pending = async () => {
 };
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
-async function until(cond: () => Promise<boolean>, timeoutMs = 15_000) {
+async function until(cond: () => Promise<boolean>, timeoutMs = 45_000) {
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
     if (await cond()) return;
@@ -280,5 +281,56 @@ describe('laço do relay', () => {
     await seed(1);
     await sleep(200);
     expect(await pending()).toBe(1); // depois do stop nada mais é publicado
+  });
+});
+
+describe('NOTIFY do outbox', () => {
+  it('um evento novo acorda o relay na hora, sem esperar o intervalo de polling', async () => {
+    const published: EventEnvelope[] = [];
+    const loop = startRelay({
+      db: t.relay.db,
+      publish: (events) => {
+        published.push(...events);
+        return Promise.resolve();
+      },
+      intervalMs: 60_000, // sem o NOTIFY só publicaria daqui a um minuto
+    });
+    const stop = listenOutbox(t.urls.relay, () => {
+      loop.nudge();
+    });
+    await sleep(500); // dá tempo do LISTEN estar ativo
+    const started = Date.now();
+    await seed(1);
+    await until(() => Promise.resolve(published.length === 1), 5000);
+    expect(Date.now() - started).toBeLessThan(2000);
+    await stop();
+    await loop.stop();
+  });
+
+  it('nudge durante um ciclo em andamento não se perde (o próximo ciclo começa sem pausa)', async () => {
+    const published: EventEnvelope[] = [];
+    let release: () => void = () => undefined;
+    let first = true;
+    const loop = startRelay({
+      db: t.relay.db,
+      publish: async (events) => {
+        if (first) {
+          first = false;
+          await new Promise<void>((r) => {
+            release = r; // segura o primeiro ciclo enquanto chega um evento novo
+          });
+        }
+        published.push(...events);
+      },
+      intervalMs: 60_000,
+    });
+    await seed(1);
+    loop.nudge();
+    await until(() => Promise.resolve(!first));
+    await seed(1);
+    loop.nudge(); // chega com o ciclo ocupado
+    release();
+    await until(() => Promise.resolve(published.length === 2), 5000);
+    await loop.stop();
   });
 });

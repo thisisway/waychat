@@ -21,6 +21,39 @@ export async function withTenant<T>(
   });
 }
 
+async function withGuc<T>(
+  db: Db,
+  guc: string,
+  value: string,
+  fn: (tx: Tx) => Promise<T>,
+): Promise<T> {
+  return db.transaction(async (tx) => {
+    await tx.execute(sql`select set_config(${guc}, ${value}, true)`);
+    return fn(tx);
+  });
+}
+
+/**
+ * Localiza a inbox pela chave pública (widget/canal API) antes de haver tenant. Só habilita a LEITURA da linha
+ * cujo `public_key` é exatamente `publicKey`; depois de descobrir `account_id`, o restante roda em `withTenant`.
+ */
+export function withInboxPublicKey<T>(
+  db: Db,
+  publicKey: string,
+  fn: (tx: Tx) => Promise<T>,
+): Promise<T> {
+  return withGuc(db, 'app.inbox_public_key', publicKey, fn);
+}
+
+/** Igual, para chaves de API (`key_prefix`). O hash do segredo é conferido no código, não no banco. */
+export function withApiKeyPrefix<T>(
+  db: Db,
+  prefix: string,
+  fn: (tx: Tx) => Promise<T>,
+): Promise<T> {
+  return withGuc(db, 'app.api_key_prefix', prefix, fn);
+}
+
 /**
  * Transação em que o usuário já autenticado `userId` pode LER as próprias associações (`account_users`),
  * usada no login para descobrir as contas antes de existir um tenant. Não concede acesso a mais nada.

@@ -1,0 +1,15 @@
+# Regras padrão do gitleaks + exceções deliberadas e específicas.
+# Sintaxe `[allowlist]` (e não `[[allowlists]]`): a gitleaks-action do CI usa uma versão do gitleaks que ainda não a conhece.
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Senhas fictícias fixas usadas por testes automatizados (nunca são credenciais reais)"
+regexes = [
+  '''uma-senha-bem-longa-42''',
+  '''qualquer-coisa-12''',
+  '''ignorada-pois-ja-existe''',
+  '''senha-errada-[0-9a-z-]+''',
+  '''errada-[0-9a-z-]+''',
+  '''waychat-teste-2026!''',
+]
