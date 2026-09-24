@@ -45,7 +45,16 @@ export interface Message {
   replyToId: string | null;
   status: 'queued' | 'sent' | 'delivered' | 'read' | 'failed';
   clientMessageId: string | null;
+  attachments: MessageAttachment[];
   createdAt: string;
+}
+
+export interface MessageAttachment {
+  id: string;
+  fileName: string;
+  contentType: string | null;
+  size: number;
+  status: 'awaiting_upload' | 'scanning' | 'clean' | 'infected' | 'rejected';
 }
 
 export interface Counts {

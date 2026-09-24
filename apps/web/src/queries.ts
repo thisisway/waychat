@@ -112,11 +112,17 @@ export function useSendMessage(conversationId: string, me: Me | undefined) {
   const qc = useQueryClient();
   const refresh = useRefreshAll();
   return useMutation({
-    mutationFn: (v: { content: string; private: boolean; clientMessageId: string }) =>
+    mutationFn: (v: {
+      content: string;
+      private: boolean;
+      clientMessageId: string;
+      attachments?: { id: string; name: string; size: number }[];
+    }) =>
       post<{ message: Message }>(`/conversations/${conversationId}/messages`, {
         content: v.content,
         private: v.private,
         client_message_id: v.clientMessageId,
+        ...(v.attachments?.length ? { attachment_ids: v.attachments.map((a) => a.id) } : {}),
       }),
     onMutate: (v) => {
       const key = ['messages', conversationId];
@@ -131,6 +137,13 @@ export function useSendMessage(conversationId: string, me: Me | undefined) {
         replyToId: null,
         status: 'queued',
         clientMessageId: v.clientMessageId,
+        attachments: (v.attachments ?? []).map((a) => ({
+          id: a.id,
+          fileName: a.name,
+          contentType: null,
+          size: a.size,
+          status: 'clean' as const,
+        })),
         createdAt: new Date().toISOString(),
       };
       qc.setQueryData<{ items: Message[]; nextCursor: string | null }>(key, (old) => ({

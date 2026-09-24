@@ -36,6 +36,16 @@ function boot(): void {
         io(url, { transports: ['websocket'], auth: { token }, reconnectionDelayMax: 10_000 }),
       storage,
       uuid: () => crypto.randomUUID(),
+      uploadFile: async (url, fields, file) => {
+        const body = new FormData();
+        for (const [k, v] of Object.entries(fields)) body.append(k, v);
+        body.append('file', file); // o arquivo vai por último, exigência do POST assinado do S3
+        try {
+          return (await fetch(url, { method: 'POST', body })).ok;
+        } catch {
+          return false;
+        }
+      },
     },
   );
   if (chat.returning) void chat.start();

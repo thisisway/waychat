@@ -64,5 +64,25 @@ export const css = `
 .composer { display: flex; gap: 8px; align-items: flex-end; padding: 10px 12px; border-top: 1px solid var(--hairline); background: var(--surface); }
 .composer textarea { resize: none; max-height: 120px; min-height: 40px; }
 .composer .primary { padding: 10px 14px; }
+.clip { border: 0; background: transparent; color: var(--text-secondary); cursor: pointer; padding: 8px; border-radius: 10px; display: grid; }
+.clip:hover:not(:disabled) { background: var(--surface-muted); color: var(--primary); }
+.clip:disabled { opacity: .4; cursor: default; }
+.clip svg { width: 22px; height: 22px; }
+.drafts { display: flex; flex-wrap: wrap; gap: 6px; padding: 8px 12px 0; border-top: 1px solid var(--hairline); background: var(--surface); }
+.drafts + .composer { border-top: 0; }
+.chip {
+  display: inline-flex; align-items: center; gap: 6px; max-width: 100%; padding: 4px 8px; border: 1px solid var(--hairline); border-radius: 8px;
+  background: var(--surface-muted); color: var(--text); font: inherit; font-size: 12px; text-align: left;
+}
+.chip .nm { min-width: 0; max-width: 140px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chip .sz { color: var(--text-muted); white-space: nowrap; }
+.chip.bad .sz { color: var(--danger-text); font-weight: 600; }
+.chip .x { border: 0; background: none; padding: 0 2px; color: var(--text-secondary); font-size: 16px; line-height: 1; cursor: pointer; border-radius: 4px; }
+.chip .x:hover { color: var(--danger-text); }
+button.chip { cursor: pointer; }
+button.chip:hover { border-color: var(--primary); }
+.atts { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; white-space: normal; }
+.atts:not(:first-child) { margin-top: 6px; }
+.msg .chip { background: var(--surface); }
 .error { padding: 24px 16px; text-align: center; color: var(--danger-text); display: flex; flex-direction: column; gap: 12px; align-items: center; }
 `;

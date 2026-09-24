@@ -2,6 +2,7 @@ import {
   agentAttachmentUrl,
   completeUpload,
   getConversation,
+  getOwnAttachment,
   requestUpload,
   type Ctx,
 } from '@waychat/core';
@@ -83,6 +84,29 @@ export function attachmentRoutes(app: FastifyInstance, ctx: Ctx): void {
         req.params.id,
       );
       return { attachment };
+    },
+  );
+
+  // Andamento de um upload próprio (o painel consulta até a varredura terminar).
+  r.get(
+    '/attachments/:id',
+    {
+      config: access.permission('conversations:reply'),
+      schema: {
+        tags: ['attachments'],
+        params: idParam,
+        response: { 200: z.object({ attachment: attachmentView }) },
+      },
+    },
+    async (req) => {
+      const actor = actorOf(req);
+      return {
+        attachment: await getOwnAttachment(
+          ctx,
+          { accountId: actor.accountId, uploaderType: 'user', uploaderId: actor.userId },
+          req.params.id,
+        ),
+      };
     },
   );
 

@@ -21,9 +21,12 @@ export {
   type TopNavTabProps,
 } from './components/Nav.js';
 export {
+  AttachmentChip,
+  formatBytes,
   MessageBubble,
   ConversationListItem,
   Composer,
+  type AttachmentItem,
   type MessageBubbleProps,
   type MessageStatus,
   type ConversationListItemProps,

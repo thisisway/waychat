@@ -1,10 +1,111 @@
-import { Bot, Check, CheckCheck, Lock, Send, AlertCircle } from 'lucide-react';
+import {
+  AlertCircle,
+  Bot,
+  Check,
+  CheckCheck,
+  FileText,
+  Loader2,
+  Lock,
+  Paperclip,
+  Send,
+  X,
+} from 'lucide-react';
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
 import { cn } from '../lib/cn.js';
 import { Avatar, UnreadBadge, type Presence } from './Avatar.js';
 import { IconButton } from './IconButton.js';
 
 export type MessageStatus = 'queued' | 'sent' | 'delivered' | 'read' | 'failed';
+
+/** Anexo de mensagem (`status` só existe no rascunho do compositor). */
+export interface AttachmentItem {
+  id: string;
+  name: string;
+  size: number;
+  status?: 'uploading' | 'scanning' | 'ready' | 'error';
+  /** Motivo da falha, mostrado no lugar do tamanho. */
+  error?: string;
+}
+
+export function formatBytes(n: number): string {
+  if (n < 1024) return `${String(n)} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(0)} KB`;
+  return `${(n / (1024 * 1024)).toFixed(1).replace('.', ',')} MB`;
+}
+
+const DRAFT_LABEL = {
+  uploading: 'Enviando…',
+  scanning: 'Verificando…',
+  ready: '',
+  error: '',
+} as const;
+
+/** Chip de arquivo: link na bolha (`onOpen`) ou item do rascunho (`onRemove`, com o andamento do envio). */
+export function AttachmentChip({
+  item,
+  onOpen,
+  onRemove,
+}: {
+  item: AttachmentItem;
+  onOpen?: (id: string) => void;
+  onRemove?: (id: string) => void;
+}) {
+  const busy = item.status === 'uploading' || item.status === 'scanning';
+  const failed = item.status === 'error';
+  const detail = failed
+    ? (item.error ?? 'Falhou')
+    : busy
+      ? DRAFT_LABEL[item.status ?? 'ready']
+      : formatBytes(item.size);
+  const body = (
+    <>
+      {busy ? (
+        <Loader2 aria-hidden className="size-4 shrink-0 animate-spin text-fg-secondary" />
+      ) : failed ? (
+        <AlertCircle aria-hidden className="size-4 shrink-0 text-danger-text" />
+      ) : (
+        <FileText aria-hidden className="size-4 shrink-0 text-primary-text" />
+      )}
+      <span className="min-w-0 max-w-48 truncate text-meta font-medium text-fg">{item.name}</span>
+      <span className={cn('shrink-0 text-caption', failed ? 'text-danger-text' : 'text-fg-muted')}>
+        {detail}
+      </span>
+    </>
+  );
+  const box =
+    'inline-flex items-center gap-2 rounded-control bg-surface-muted px-2.5 py-1.5 text-left';
+  return (
+    <span className="inline-flex items-center gap-1">
+      {onOpen ? (
+        <button
+          type="button"
+          onClick={() => {
+            onOpen(item.id);
+          }}
+          aria-label={`Baixar ${item.name}`}
+          className={cn(box, 'hover:brightness-95')}
+        >
+          {body}
+        </button>
+      ) : (
+        <span role={busy || failed ? 'status' : undefined} className={box}>
+          {body}
+        </span>
+      )}
+      {onRemove ? (
+        <IconButton
+          variant="ghost"
+          size="sm"
+          label={`Remover ${item.name}`}
+          icon={<X />}
+          onClick={() => {
+            onRemove(item.id);
+          }}
+        />
+      ) : null}
+    </span>
+  );
+}
 
 export interface MessageBubbleProps {
   direction: 'in' | 'out';
@@ -21,6 +122,9 @@ export interface MessageBubbleProps {
   status?: MessageStatus;
   /** Nota interna: fundo próprio e rótulo; nunca sai para o cliente. */
   note?: boolean;
+  /** Arquivos anexados à mensagem. */
+  attachments?: AttachmentItem[];
+  onOpenAttachment?: (id: string) => void;
   className?: string;
 }
 
@@ -64,6 +168,8 @@ export function MessageBubble({
   via,
   status,
   note,
+  attachments,
+  onOpenAttachment,
   className,
 }: MessageBubbleProps) {
   const out = direction === 'out';
@@ -97,6 +203,18 @@ export function MessageBubble({
           </p>
         ) : null}
         {children}
+        {attachments && attachments.length > 0 ? (
+          <ul className={cn('flex flex-col items-start gap-1.5', children ? 'mt-2' : '')}>
+            {attachments.map((a) => (
+              <li key={a.id}>
+                <AttachmentChip
+                  item={a}
+                  {...(onOpenAttachment ? { onOpen: onOpenAttachment } : {})}
+                />
+              </li>
+            ))}
+          </ul>
+        ) : null}
       </div>
       {out && status && !note ? <StatusMark status={status} /> : null}
     </div>
@@ -172,6 +290,12 @@ export interface ComposerProps {
   channelLabel?: string;
   /** Avisa que o atendente está (ou parou de) digitando; quem usa aplica o limite de taxa. */
   onTyping?: (on: boolean) => void;
+  /** Arquivos em preparação (o envio ao servidor é de quem usa). Só na aba Responder. */
+  drafts?: AttachmentItem[];
+  onAttach?: (files: File[]) => void;
+  onRemoveDraft?: (id: string) => void;
+  /** Extensões aceitas, para o seletor de arquivos (`.png,.pdf`). */
+  accept?: string;
 }
 
 /**
@@ -185,12 +309,19 @@ export function Composer({
   placeholder,
   channelLabel,
   onTyping,
+  drafts = [],
+  onAttach,
+  onRemoveDraft,
+  accept,
 }: ComposerProps) {
   const [text, setText] = useState('');
   const [mode, setMode] = useState<'reply' | 'note'>('reply');
   const [busy, setBusy] = useState(false);
   const [active, setActive] = useState(0);
   const ref = useRef<HTMLTextAreaElement>(null);
+  const fileInput = useRef<HTMLInputElement>(null);
+  const inFlight = drafts.some((d) => d.status === 'uploading' || d.status === 'scanning');
+  const ready = drafts.filter((d) => d.status === 'ready').length;
 
   const suggestions = useMemo(() => {
     if (!text.startsWith('/') || text.includes(' ')) return [];
@@ -216,7 +347,8 @@ export function Composer({
 
   const submit = async () => {
     const value = text.trim();
-    if (!value || busy || disabled) return;
+    const withFiles = mode === 'reply' && ready > 0;
+    if ((!value && !withFiles) || busy || disabled || (mode === 'reply' && inFlight)) return;
     setBusy(true);
     try {
       if (await onSend(value, mode)) {
@@ -311,7 +443,39 @@ export function Composer({
           </span>
         ) : null}
       </div>
+      {!note && drafts.length > 0 ? (
+        <ul aria-label="Arquivos a enviar" className="mb-2 flex flex-wrap gap-2">
+          {drafts.map((d) => (
+            <li key={d.id}>
+              <AttachmentChip item={d} {...(onRemoveDraft ? { onRemove: onRemoveDraft } : {})} />
+            </li>
+          ))}
+        </ul>
+      ) : null}
       <div className="flex items-end gap-3">
+        {onAttach && !note ? (
+          <>
+            <input
+              ref={fileInput}
+              type="file"
+              multiple
+              hidden
+              {...(accept ? { accept } : {})}
+              aria-label="Selecionar arquivos"
+              onChange={(e) => {
+                const files = Array.from(e.target.files ?? []);
+                e.target.value = ''; // permite escolher o mesmo arquivo de novo
+                if (files.length > 0) onAttach(files);
+              }}
+            />
+            <IconButton
+              label="Anexar arquivo"
+              icon={<Paperclip />}
+              disabled={disabled}
+              onClick={() => fileInput.current?.click()}
+            />
+          </>
+        ) : null}
         <textarea
           ref={ref}
           value={text}
@@ -338,7 +502,12 @@ export function Composer({
           variant="primary"
           label={note ? 'Salvar nota' : 'Enviar mensagem'}
           icon={<Send />}
-          disabled={disabled || busy || text.trim().length === 0}
+          disabled={
+            disabled ||
+            busy ||
+            (mode === 'reply' && inFlight) ||
+            (text.trim().length === 0 && !(mode === 'reply' && ready > 0))
+          }
           onClick={() => void submit()}
         />
       </div>

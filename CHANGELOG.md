@@ -11,6 +11,7 @@ Formato baseado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/).
 - Tempo real: Socket.IO autenticado pela sessão do painel, com checagem de `Origin`, limite de conexões, presença ("outro atendente está nesta conversa") e indicador de digitação; painel reconecta sozinho e recupera o que perdeu por `GET /sync` (ADR 0007).
 - Canal API: `POST /api/v1/messages` com chave Bearer (escopo `messages:write`), idempotente por `external_id`; só escreve em inbox do canal API da própria conta.
 - Widget de chat (`apps/widget`): Preact + Shadow DOM, 23,5 KB gzip, pré-chat, identidade por HMAC, pt-BR/en/es, reconexão com recuperação, respostas em tempo real (ADR 0008).
+- Anexos no painel e no widget: upload direto ao S3 por formulário assinado (10 MB), tipo conferido pela assinatura do arquivo, varredura ClamAV em fila, download por link de 5 minutos (ADR 0009). Pacote `@waychat/storage`.
 - `GET /sync`: eventos desde um cursor, com a mesma regra de visibilidade do WebSocket.
 
 ### Fase 0 — Fundação

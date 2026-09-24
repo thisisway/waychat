@@ -28,6 +28,7 @@ const msg = (over: Partial<Msg> = {}): Msg => ({
   content: 'oi',
   created_at: new Date().toISOString(),
   client_message_id: null,
+  attachments: [],
   ...over,
 });
 
@@ -36,6 +37,7 @@ interface Setup {
   sockets: FakeSocket[];
   calls: { url: string; init: RequestInit }[];
   store: Map<string, string>;
+  uploads: { url: string; fields: Record<string, string>; file: File }[];
 }
 
 function setup(
@@ -45,12 +47,20 @@ function setup(
     identified?: boolean;
     store?: Map<string, string>;
     failSend?: number;
+    uploadOk?: boolean;
+    /** Status devolvido por /complete. */
+    completeStatus?: 'clean' | 'scanning';
+    /** Quantas consultas a /url devolvem 404 antes de liberar. */
+    notCleanPolls?: number;
   } = {},
 ): Setup {
   const sockets: FakeSocket[] = [];
   const calls: { url: string; init: RequestInit }[] = [];
   const store = opts.store ?? new Map<string, string>();
+  const uploads: Setup['uploads'] = [];
   let failSend = opts.failSend ?? 0;
+  let urlPolls = 0;
+  let attSeq = 0;
   const json = (body: unknown, status = 200) =>
     Promise.resolve(new Response(JSON.stringify(body), { status }));
   const fetchFake = ((url: string, init: RequestInit = {}) => {
@@ -64,17 +74,53 @@ function setup(
         inbox: { name: 'Site', welcome_message: null, primary_color: '#ff0000' },
       });
     }
+    if (url.endsWith('/widget/v1/attachments') && init.method === 'POST') {
+      const b = JSON.parse(init.body as string) as { file_name: string; size: number };
+      attSeq++;
+      return json(
+        {
+          attachment: {
+            id: `att-${String(attSeq)}`,
+            file_name: b.file_name,
+            content_type: 'image/png',
+            size: b.size,
+            status: 'pending',
+          },
+          upload: { url: 'https://s3.test/bucket', fields: { key: 'k', policy: 'p' } },
+        },
+        201,
+      );
+    }
+    if (url.endsWith('/complete')) {
+      return json({ attachment: { id: 'x', status: opts.completeStatus ?? 'scanning' } });
+    }
+    if (/\/attachments\/[^/]+\/url$/.test(url)) {
+      urlPolls++;
+      return urlPolls > (opts.notCleanPolls ?? 0)
+        ? json({ url: 'https://s3.test/signed' })
+        : json({ error: { code: 'not_found', message: 'x' } }, 404);
+    }
     if (url.endsWith('/widget/v1/messages') && init.method === 'POST') {
       if (failSend > 0) {
         failSend--;
         return json({}, 500);
       }
-      const b = JSON.parse(init.body as string) as { content: string; client_message_id: string };
+      const b = JSON.parse(init.body as string) as {
+        content: string;
+        client_message_id: string;
+        attachment_ids?: string[];
+      };
       return json({
         message: msg({
           from: 'visitor',
           content: b.content,
           client_message_id: b.client_message_id,
+          attachments: (b.attachment_ids ?? []).map((id) => ({
+            id,
+            file_name: 'foto.png',
+            content_type: 'image/png',
+            size: 1,
+          })),
         }),
         duplicate: false,
       });
@@ -90,9 +136,13 @@ function setup(
     },
     storage: { getItem: (k) => store.get(k) ?? null, setItem: (k, v) => void store.set(k, v) },
     uuid: () => crypto.randomUUID(),
+    uploadFile: (url, fields, file) => {
+      uploads.push({ url, fields, file });
+      return Promise.resolve(opts.uploadOk ?? true);
+    },
   };
   const chat = new Chat({ api: 'https://api.test', publicKey: 'ibx_x', ...opts.cfg }, deps);
-  return { chat, sockets, calls, store };
+  return { chat, sockets, calls, store, uploads };
 }
 
 describe('sessão e histórico', () => {
@@ -253,5 +303,141 @@ describe('recuperação', () => {
     await vi.waitFor(() => {
       expect(s.sockets).toHaveLength(2);
     });
+  });
+});
+
+const png = (name = 'foto.png') => new File(['x'], name, { type: 'image/png' });
+const attCalls = (s: Setup, suffix: string) => s.calls.filter((c) => c.url.endsWith(suffix));
+const postedMessages = (s: Setup) =>
+  s.calls.filter((c) => c.init.method === 'POST' && c.url.endsWith('/widget/v1/messages'));
+
+describe('anexos', () => {
+  it('fluxo feliz: pede upload, envia ao S3, conclui, espera o antivírus e envia com attachment_ids', async () => {
+    const s = setup({ notCleanPolls: 2 });
+    await s.chat.start();
+    vi.useFakeTimers();
+    try {
+      const p = s.chat.attach(png());
+      await vi.advanceTimersByTimeAsync(10);
+      expect(s.chat.state.draft[0]).toMatchObject({ status: 'scanning', attachmentId: 'att-1' });
+      // o S3 recebe os campos assinados e o arquivo
+      expect(s.uploads).toHaveLength(1);
+      expect(s.uploads[0]).toMatchObject({
+        url: 'https://s3.test/bucket',
+        fields: { key: 'k', policy: 'p' },
+      });
+      expect(s.uploads[0]?.file.name).toBe('foto.png');
+      await vi.advanceTimersByTimeAsync(3500);
+      await p;
+      expect(s.chat.state.draft[0]).toMatchObject({ status: 'ready', attachmentId: 'att-1' });
+      expect(attCalls(s, '/url')).toHaveLength(3);
+    } finally {
+      vi.useRealTimers();
+    }
+    await s.chat.send('');
+    const body = JSON.parse(postedMessages(s)[0]?.init.body as string) as Record<string, unknown>;
+    expect(body).toMatchObject({ content: '', attachment_ids: ['att-1'] });
+    expect(s.chat.state.draft).toEqual([]);
+    expect(s.chat.state.messages.at(-1)?.attachments.map((a) => a.id)).toEqual(['att-1']);
+  });
+
+  it('anexo já limpo no complete vai direto para pronto, sem polling', async () => {
+    const s = setup({ completeStatus: 'clean' });
+    await s.chat.start();
+    await s.chat.attach(png());
+    expect(s.chat.state.draft[0]?.status).toBe('ready');
+    expect(attCalls(s, '/url')).toHaveLength(0);
+  });
+
+  it('extensão proibida e arquivo > 10 MB são barrados no cliente, sem chamar a API', async () => {
+    const s = setup();
+    await s.chat.start();
+    const before = s.calls.length;
+    await s.chat.attach(new File(['x'], 'virus.exe'));
+    await s.chat.attach(new File(['x'], 'semextensao'));
+    await s.chat.attach(new File([new Uint8Array(10 * 1024 * 1024 + 1)], 'grande.pdf'));
+    expect(s.chat.state.draft.map((d) => [d.status, d.error])).toEqual([
+      ['error', 'type'],
+      ['error', 'type'],
+      ['error', 'size'],
+    ]);
+    expect(s.calls.length).toBe(before);
+    expect(s.uploads).toHaveLength(0);
+  });
+
+  it('falha no upload ao S3 marca erro e não conclui', async () => {
+    const s = setup({ uploadOk: false });
+    await s.chat.start();
+    await s.chat.attach(png());
+    expect(s.chat.state.draft[0]).toMatchObject({ status: 'error', error: 'upload' });
+    expect(attCalls(s, '/complete')).toHaveLength(0);
+  });
+
+  it('no máximo 5 anexos por mensagem', async () => {
+    const s = setup({ completeStatus: 'clean' });
+    await s.chat.start();
+    await Promise.all(Array.from({ length: 6 }, (_, i) => s.chat.attach(png(`f${String(i)}.png`))));
+    expect(s.chat.state.draft).toHaveLength(5);
+    expect(s.calls.filter((c) => c.url.endsWith('/widget/v1/attachments'))).toHaveLength(5);
+  });
+
+  it('send não dispara enquanto há anexo em verificação', async () => {
+    const s = setup();
+    await s.chat.start();
+    vi.useFakeTimers();
+    try {
+      const p = s.chat.attach(png());
+      await vi.advanceTimersByTimeAsync(10);
+      expect(s.chat.state.draft[0]?.status).toBe('scanning');
+      await s.chat.send('oi');
+      expect(postedMessages(s)).toHaveLength(0);
+      expect(s.chat.state.draft).toHaveLength(1);
+      await vi.advanceTimersByTimeAsync(1500);
+      await p;
+    } finally {
+      vi.useRealTimers();
+    }
+    await s.chat.send('oi');
+    expect(postedMessages(s)).toHaveLength(1);
+  });
+
+  it('desiste da verificação após ~60 s', async () => {
+    const s = setup({ notCleanPolls: Infinity });
+    await s.chat.start();
+    vi.useFakeTimers();
+    try {
+      const p = s.chat.attach(png());
+      await vi.advanceTimersByTimeAsync(61_000);
+      await p;
+      expect(s.chat.state.draft[0]).toMatchObject({ status: 'error', error: 'scan' });
+      expect(attCalls(s, '/url')).toHaveLength(60);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('remover do rascunho interrompe o polling', async () => {
+    const s = setup();
+    await s.chat.start();
+    vi.useFakeTimers();
+    try {
+      const p = s.chat.attach(png());
+      await vi.advanceTimersByTimeAsync(10);
+      const id = s.chat.state.draft[0]?.localId ?? '';
+      s.chat.removeDraft(id);
+      expect(s.chat.state.draft).toEqual([]);
+      await vi.advanceTimersByTimeAsync(3000);
+      await p;
+      expect(attCalls(s, '/url')).toHaveLength(0);
+      expect(s.chat.state.draft).toEqual([]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('downloadUrl devolve o link assinado', async () => {
+    const s = setup();
+    await s.chat.start();
+    await expect(s.chat.downloadUrl('att-9')).resolves.toBe('https://s3.test/signed');
   });
 });

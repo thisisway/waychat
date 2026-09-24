@@ -1,11 +1,31 @@
 import type { Socket } from 'socket.io-client';
 
+export interface AttachmentInfo {
+  id: string;
+  file_name: string;
+  content_type: string;
+  size: number;
+}
+
+export type DraftError = 'type' | 'size' | 'upload' | 'scan';
+
+/** Anexo em preparação (ainda não enviado numa mensagem). */
+export interface DraftItem {
+  localId: string;
+  name: string;
+  size: number;
+  status: 'uploading' | 'scanning' | 'ready' | 'error';
+  attachmentId?: string;
+  error?: DraftError;
+}
+
 export interface Msg {
   id: string;
   from: 'visitor' | 'agent';
   content: string;
   created_at: string;
   client_message_id: string | null;
+  attachments: AttachmentInfo[];
   /** Enviada localmente, ainda sem confirmação da API. */
   pending?: boolean;
   failed?: boolean;
@@ -34,6 +54,7 @@ export interface ChatState {
   /** Precisa de nome/e-mail (pré-chat) antes de a conversa começar. */
   needsProfile: boolean;
   unread: number;
+  draft: DraftItem[];
 }
 
 interface Session {
@@ -49,6 +70,8 @@ export interface ChatDeps {
   connect: (url: string, token: string) => Socket;
   storage: Pick<Storage, 'getItem' | 'setItem'> | null;
   uuid: () => string;
+  /** Envia o arquivo direto ao armazenamento (POST multipart com os campos assinados). true = 2xx. */
+  uploadFile: (url: string, fields: Record<string, string>, file: File) => Promise<boolean>;
 }
 
 interface Profile {
@@ -57,6 +80,16 @@ interface Profile {
 }
 
 const POLL_MS = 10_000;
+
+/** Mesmos limites do servidor; validar aqui só evita uma ida à API. */
+export const ATTACH_EXT = [
+  ...['jpg', 'jpeg', 'png', 'gif', 'webp', 'pdf', 'mp3', 'ogg', 'oga', 'opus', 'wav', 'm4a'],
+  ...['mp4', 'mov', 'webm', 'txt', 'csv', 'log'],
+];
+export const MAX_ATTACH_BYTES = 10 * 1024 * 1024;
+export const MAX_ATTACH_PER_MSG = 5;
+const SCAN_MS = 1000;
+const SCAN_TRIES = 60;
 
 /**
  * Tudo que não é tela: sessão, histórico, envio otimista, tempo real e recuperação.
@@ -70,6 +103,7 @@ export class Chat {
     inbox: null,
     needsProfile: false,
     unread: 0,
+    draft: [],
   };
   private listeners = new Set<() => void>();
   private token: string | null = null;
@@ -264,9 +298,19 @@ export class Chat {
     await this.start(); // a sessão nova leva nome/e-mail (ficam no contato na primeira mensagem)
   }
 
-  async send(text: string, reuseId?: string): Promise<void> {
+  /** `retryAtt` só vem de `retry()`: reenvia os anexos que já estavam na mensagem. */
+  async send(text: string, reuseId?: string, retryAtt?: AttachmentInfo[]): Promise<void> {
     const content = text.trim();
-    if (!content || !this.token) return;
+    const draft = this.state.draft;
+    if (!reuseId && draft.some((d) => d.status === 'uploading' || d.status === 'scanning')) return;
+    const atts: AttachmentInfo[] =
+      retryAtt ??
+      draft.flatMap((d) =>
+        d.status === 'ready' && d.attachmentId
+          ? [{ id: d.attachmentId, file_name: d.name, content_type: '', size: d.size }]
+          : [],
+      );
+    if ((!content && atts.length === 0) || !this.token) return;
     const clientMessageId = reuseId ?? this.deps.uuid();
     const optimistic: Msg = {
       id: `local-${clientMessageId}`,
@@ -274,6 +318,7 @@ export class Chat {
       content,
       created_at: new Date().toISOString(),
       client_message_id: clientMessageId,
+      attachments: atts,
       pending: true,
     };
     if (reuseId) {
@@ -284,18 +329,26 @@ export class Chat {
       });
     } else {
       this.add(optimistic);
+      this.set({ draft: draft.filter((d) => d.status !== 'ready') });
     }
     try {
       const res = await this.req<{ message: Msg }>(
         '/widget/v1/messages',
-        { method: 'POST', body: JSON.stringify({ content, client_message_id: clientMessageId }) },
+        {
+          method: 'POST',
+          body: JSON.stringify({
+            content,
+            client_message_id: clientMessageId,
+            attachment_ids: atts.map((a) => a.id),
+          }),
+        },
         this.token,
       );
       this.add(res.message);
     } catch (e) {
       if ((e as { status?: number }).status === 401) {
         await this.start();
-        return this.send(content, clientMessageId);
+        return this.send(content, clientMessageId, atts);
       }
       this.set({
         messages: this.state.messages.map((m) =>
@@ -305,10 +358,98 @@ export class Chat {
     }
   }
 
+  /** Requisição autenticada; em 401 renova a sessão e repete uma vez. */
+  private async authed<T>(path: string, init: RequestInit = {}): Promise<T> {
+    try {
+      return await this.req<T>(path, init, this.token ?? undefined);
+    } catch (e) {
+      if ((e as { status?: number }).status !== 401) throw e;
+      await this.start();
+      return this.req<T>(path, init, this.token ?? undefined);
+    }
+  }
+
+  private patchDraft(localId: string, patch: Partial<DraftItem>): void {
+    this.set({
+      draft: this.state.draft.map((d) => (d.localId === localId ? { ...d, ...patch } : d)),
+    });
+  }
+
+  removeDraft(localId: string): void {
+    this.set({ draft: this.state.draft.filter((d) => d.localId !== localId) });
+  }
+
+  /** Valida, pede o upload, envia ao S3, conclui e espera o antivírus liberar. */
+  async attach(file: File): Promise<void> {
+    if (this.state.draft.length >= MAX_ATTACH_PER_MSG) return;
+    const localId = this.deps.uuid();
+    const dot = file.name.lastIndexOf('.');
+    const ext = dot < 0 ? '' : file.name.slice(dot + 1).toLowerCase();
+    const item: DraftItem = { localId, name: file.name, size: file.size, status: 'uploading' };
+    const invalid: DraftError | null = !ATTACH_EXT.includes(ext)
+      ? 'type'
+      : file.size > MAX_ATTACH_BYTES
+        ? 'size'
+        : null;
+    // o rascunho entra antes de qualquer await: vários arquivos de uma vez respeitam o limite
+    this.set({
+      draft: [...this.state.draft, invalid ? { ...item, status: 'error', error: invalid } : item],
+    });
+    if (invalid) return;
+    try {
+      const r = await this.authed<{
+        attachment: { id: string };
+        upload: { url: string; fields: Record<string, string> };
+      }>('/widget/v1/attachments', {
+        method: 'POST',
+        body: JSON.stringify({ file_name: file.name, size: file.size }),
+      });
+      const id = r.attachment.id;
+      this.patchDraft(localId, { attachmentId: id });
+      if (!(await this.deps.uploadFile(r.upload.url, r.upload.fields, file))) {
+        this.patchDraft(localId, { status: 'error', error: 'upload' });
+        return;
+      }
+      const c = await this.authed<{ attachment: { status: string } }>(
+        `/widget/v1/attachments/${id}/complete`,
+        { method: 'POST', body: '{}' },
+      );
+      if (c.attachment.status === 'clean') {
+        this.patchDraft(localId, { status: 'ready' });
+        return;
+      }
+      this.patchDraft(localId, { status: 'scanning' });
+      await this.waitClean(localId, id);
+    } catch {
+      this.patchDraft(localId, { status: 'error', error: 'upload' });
+    }
+  }
+
+  /** Sonda a URL de download: 200 = antivírus liberou. Desiste em ~60 s. */
+  private async waitClean(localId: string, id: string): Promise<void> {
+    for (let i = 0; i < SCAN_TRIES; i++) {
+      await new Promise((r) => setTimeout(r, SCAN_MS));
+      if (this.destroyed || !this.state.draft.some((d) => d.localId === localId)) return;
+      try {
+        await this.authed(`/widget/v1/attachments/${id}/url`);
+        this.patchDraft(localId, { status: 'ready' });
+        return;
+      } catch {
+        // 404 = ainda em verificação; tenta de novo
+      }
+    }
+    this.patchDraft(localId, { status: 'error', error: 'scan' });
+  }
+
+  /** Link assinado (5 min): peça no clique, não antes. */
+  async downloadUrl(attachmentId: string): Promise<string> {
+    return (await this.authed<{ url: string }>(`/widget/v1/attachments/${attachmentId}/url`)).url;
+  }
+
   /** Reenvia uma mensagem que falhou (mesmo `client_message_id`: se a primeira chegou, não duplica). */
   retry(clientMessageId: string): Promise<void> {
     const m = this.state.messages.find((x) => x.client_message_id === clientMessageId);
-    return m ? this.send(m.content, clientMessageId) : Promise.resolve();
+    return m ? this.send(m.content, clientMessageId, m.attachments) : Promise.resolve();
   }
 
   destroy(): void {

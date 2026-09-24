@@ -18,6 +18,7 @@ const apiPaths = [
   '/audit-logs',
   '/api-keys',
   '/sync',
+  '/attachments',
 ];
 
 export default defineConfig({

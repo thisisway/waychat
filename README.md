@@ -59,6 +59,17 @@ Snippet para o site do cliente (o build gera `apps/widget/dist/waychat-widget.js
 
 Opcionais: `data-locale` (`pt-BR`, `en`, `es`), `data-color` e, para usuário logado, `data-user-id` + `data-user-hmac` — o HMAC é `HMAC-SHA256(segredo de identidade, user_id)` em hex, calculado **no servidor do cliente**. O site precisa estar em `allowedOrigins` da inbox.
 
+### Anexos
+
+O bucket é criado sozinho em desenvolvimento (MinIO). Sem antivírus os arquivos passam como limpos; para varrer de verdade:
+
+```bash
+docker compose -f infra/docker/compose.dev.yml --env-file .env --profile antivirus up -d --wait   # ClamAV (baixa as assinaturas: demora)
+# no .env: CLAMAV_HOST=127.0.0.1
+```
+
+Em produção `CLAMAV_HOST` é obrigatório e o bucket precisa aceitar POST (CORS) do painel e dos sites que usam o widget; defina `S3_PUBLIC_ENDPOINT` com o endereço do S3 visto pelo navegador.
+
 As portas do host são `5462` (Postgres), `6409` (Valkey) e `9030/9031` (MinIO) para não colidir com outros projetos locais. A API escuta em `3000`; `/metrics` do Prometheus em `9464` (API) e `9465` (worker), nunca expostas pelo proxy.
 
 ## Qualidade

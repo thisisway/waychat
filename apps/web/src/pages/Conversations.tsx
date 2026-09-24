@@ -53,6 +53,7 @@ import {
   useToggleLabel,
   useUpdateConversation,
 } from '../queries.js';
+import { ACCEPT, openAttachment, useAttachmentDrafts } from '../attachments.js';
 import type { ConversationDetail, FilterKey, Me, Message } from '../types.js';
 
 const FILTERS: { key: FilterKey; label: string; icon: typeof Inbox }[] = [
@@ -346,6 +347,7 @@ function ConversationView({ id, me, onBack }: { id: string; me: Me; onBack: () =
   const markRead = useMarkRead();
   const update = useUpdateConversation(id);
   const send = useSendMessage(id, me);
+  const files = useAttachmentDrafts(id);
   const endRef = useRef<HTMLDivElement>(null);
   const presence = useConversationPresence(id);
   const notifyTyping = useMemo(() => makeTypingNotifier(id), [id]);
@@ -421,13 +423,21 @@ function ConversationView({ id, me, onBack }: { id: string; me: Me; onBack: () =
             {...(c ? { channelLabel: c.inbox.name } : {})}
             onTyping={notifyTyping}
             disabled={!c}
+            drafts={files.drafts}
+            onAttach={files.attach}
+            onRemoveDraft={files.remove}
+            accept={ACCEPT}
             onSend={async (text, mode) => {
               try {
+                const attach =
+                  mode === 'reply' ? files.drafts.filter((d) => d.status === 'ready') : [];
                 await send.mutateAsync({
                   content: text,
                   private: mode === 'note',
                   clientMessageId: crypto.randomUUID(),
+                  attachments: attach,
                 });
+                if (attach.length > 0) files.clear();
                 return true;
               } catch {
                 return false; // mantém o texto no campo para tentar de novo
@@ -527,6 +537,10 @@ function Bubble({
       {...(out ? { status: m.status } : {})}
       note={m.private}
       automated={m.senderType === 'bot'}
+      attachments={m.attachments.map((a) => ({ id: a.id, name: a.fileName, size: a.size }))}
+      onOpenAttachment={(attId) => {
+        void openAttachment(attId);
+      }}
     >
       {m.content}
     </MessageBubble>
