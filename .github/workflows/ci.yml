@@ -29,8 +29,9 @@ jobs:
       - run: pnpm build
       - run: pnpm lint
       - run: pnpm typecheck
-      # Os testes usam Testcontainers (Postgres e Valkey reais); o runner já tem Docker.
-      - run: pnpm test
+      # Os testes usam Testcontainers (Postgres e Valkey reais); o runner já tem Docker. Um pacote por vez:
+      # subir vários bancos em paralelo num runner pequeno estoura os timeouts sem indicar defeito real.
+      - run: pnpm exec turbo run test --concurrency=1
       - name: Auditoria de dependências
         run: pnpm audit --audit-level=high
 
