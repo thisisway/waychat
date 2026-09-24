@@ -128,6 +128,7 @@ describe('autorização deny-by-default', () => {
         'GET /health/live',
         'GET /health/ready',
         'GET /openapi.json',
+        'POST /widget/v1/session',
         'POST /auth/login',
         'POST /auth/mfa/enroll/begin',
         'POST /auth/mfa/enroll/complete',

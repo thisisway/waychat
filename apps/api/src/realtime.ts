@@ -6,17 +6,21 @@ import {
   canSeeEvent,
   currentCursor,
   loadEventScope,
+  loadVisitorDelivery,
   loadVisibleConversation,
+  verifyVisitorToken,
+  widgetOriginAllowed,
   type AuthenticatedActor,
   type Ctx,
   type EventScope,
+  type Visitor,
 } from '@waychat/core';
 import { withTenant } from '@waychat/db';
 import { eventEnvelopeSchema, type Env, type EventEnvelope } from '@waychat/shared';
 import { parseCookie } from 'cookie';
 import type { Redis } from 'ioredis';
 import { Counter, Gauge, type Registry } from 'prom-client';
-import { Server, type Socket } from 'socket.io';
+import { Server, type Namespace, type Socket } from 'socket.io';
 import { z } from 'zod';
 import { COOKIE } from './cookies.js';
 
@@ -90,6 +94,18 @@ export interface ClientToServer {
   typing: (payload: unknown) => void;
 }
 
+/** Namespace `/widget`: o visitante só recebe as respostas da própria conversa. */
+interface WidgetServerToClient {
+  ready: () => void;
+  message: (m: {
+    id: string;
+    from: 'visitor' | 'agent';
+    content: string;
+    created_at: Date;
+    client_message_id: string | null;
+  }) => void;
+}
+
 interface SocketData {
   token: string;
   actor: AuthenticatedActor;
@@ -129,10 +145,9 @@ export async function attachRealtime(opts: RealtimeOptions): Promise<Realtime> {
       pingInterval: 20_000,
       pingTimeout: 20_000,
       cors: { origin: allowedOrigin, credentials: true },
-      // Origin do handshake (polling e websocket): recusa antes de qualquer autenticação.
-      allowRequest: (req, cb) => {
-        const origin = req.headers.origin;
-        cb(null, origin === undefined || origin === allowedOrigin);
+      // A origem é checada por namespace: o painel só aceita a própria; o widget, as origens da inbox.
+      allowRequest: (_req, cb) => {
+        cb(null, true);
       },
     },
   );
@@ -168,6 +183,9 @@ export async function attachRealtime(opts: RealtimeOptions): Promise<Realtime> {
   io.use((socket, next) => {
     void (async () => {
       try {
+        // anti-CSWSH: sem isso, qualquer site aberto no navegador do atendente abriria a conexão dele
+        const origin = socket.request.headers.origin;
+        if (origin !== undefined && origin !== allowedOrigin) throw new Error('origin');
         const token = parseCookie(socket.request.headers.cookie ?? '')[COOKIE.access];
         if (!token) throw new Error('no_cookie');
         const actor = await authenticate(ctx, token);
@@ -245,9 +263,82 @@ export async function attachRealtime(opts: RealtimeOptions): Promise<Realtime> {
         delivered?.inc();
       }
     }
+    await deliverToVisitors(event);
   };
+
+  // Resposta de atendente numa inbox de widget: vai para o visitante dono da conversa (com o conteúdo, que
+  // é dele; o evento em si segue sem conteúdo). Só consulta o banco se houver visitante conectado.
+  async function deliverToVisitors(event: EventEnvelope): Promise<void> {
+    if (event.type !== 'message.created' || widgetNs.sockets.size === 0) return;
+    const p = event.payload as { message_id: string; direction: string; private: boolean };
+    if (p.direction !== 'out' || p.private) return;
+    const target = await loadVisitorDelivery(ctx, event.account_id, p.message_id);
+    if (!target) return;
+    for (const s of widgetNs.sockets.values()) {
+      const v = visitorOfSocket(s);
+      if (
+        v.accountId === event.account_id &&
+        v.inboxId === target.inboxId &&
+        v.externalId === target.externalId
+      ) {
+        s.emit('message', {
+          id: target.message.id,
+          from: target.message.from,
+          content: target.message.content,
+          created_at: target.message.createdAt,
+          client_message_id: target.message.clientMessageId,
+        });
+      }
+    }
+  }
   await opts.feed.start((event) => {
     chain = chain.then(() => dispatch(event)).catch(() => undefined);
+  });
+
+  // ---- visitantes do widget (namespace próprio: token do widget no handshake, sem cookie)
+  const widgetNs = io.of('/widget') as unknown as Namespace<
+    Record<string, never>,
+    WidgetServerToClient,
+    Record<string, never>,
+    Visitor
+  >;
+  const visitorOfSocket = (s: { data: Visitor }) => s.data;
+  widgetNs.use((socket, next) => {
+    void (async () => {
+      try {
+        const auth = socket.handshake.auth as { token?: unknown };
+        if (typeof auth.token !== 'string') throw new Error('no_token');
+        const v = await verifyVisitorToken(ctx, auth.token);
+        if (!(await widgetOriginAllowed(ctx, v, socket.request.headers.origin))) {
+          throw new Error('origin');
+        }
+        const sameVisitor = [...widgetNs.sockets.values()].filter(
+          (s) =>
+            visitorOfSocket(s).inboxId === v.inboxId &&
+            visitorOfSocket(s).externalId === v.externalId,
+        );
+        if (sameVisitor.length >= 5) throw new Error('too_many');
+        Object.assign(socket.data, v);
+        next();
+      } catch {
+        rejected?.inc({ reason: 'widget_unauthorized' });
+        next(new Error('unauthorized'));
+      }
+    })();
+  });
+  widgetNs.on('connection', (socket) => {
+    connections?.inc();
+    socket.emit('ready');
+    // o token vence: encerra a conexão para o cliente renovar a sessão
+    const exp = visitorOfSocket(socket).expiresAt;
+    const timer = exp
+      ? setTimeout(() => socket.disconnect(true), Math.max(0, exp.getTime() - ctx.now().getTime()))
+      : null;
+    timer?.unref();
+    socket.on('disconnect', () => {
+      if (timer) clearTimeout(timer);
+      connections?.dec();
+    });
   });
 
   // ---- conexões

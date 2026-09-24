@@ -146,3 +146,16 @@ export {
   currentCursor,
   type SyncResult,
 } from './modules/events/application/sync.js';
+export {
+  loadVisitorDelivery,
+  openSessionInput,
+  openWidgetSession,
+  verifyVisitorToken,
+  visitorMessages,
+  visitorSend,
+  visitorSendInput,
+  widgetOriginAllowed,
+  type Visitor,
+  type VisitorMessage,
+  type WidgetSession,
+} from './modules/widget/application/widget.js';

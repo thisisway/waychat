@@ -23,6 +23,7 @@ import { conversationRoutes } from './routes/conversations.js';
 import { inboxRoutes } from './routes/inboxes.js';
 import { channelApiRoutes } from './routes/channel-api.js';
 import { syncRoutes } from './routes/sync.js';
+import { widgetRoutes } from './routes/widget.js';
 import { authRoutes } from './routes/auth.js';
 import { healthRoutes } from './routes/health.js';
 import { access, type Access } from './types.js';
@@ -87,12 +88,25 @@ export async function buildApp(deps: AppDeps): Promise<BuiltApp> {
     referrerPolicy: { policy: 'no-referrer' },
     crossOriginResourcePolicy: { policy: 'same-site' },
   });
-  await app.register(cors, {
+  const panelCors = {
     origin: new URL(env.PUBLIC_URL).origin,
     credentials: true,
     methods: ['GET', 'POST', 'PATCH', 'PUT', 'DELETE'],
     allowedHeaders: ['content-type', 'x-csrf-token', 'x-request-id'],
     maxAge: 600,
+  };
+  // O widget roda no site do cliente: qualquer origem pode CHAMAR /widget/*, mas sem cookies (só Bearer).
+  // Quem pode abrir sessão é decidido pela lista de origens da inbox, dentro do caso de uso.
+  const widgetCors = {
+    origin: '*',
+    methods: ['GET', 'POST'],
+    allowedHeaders: ['content-type', 'authorization'],
+    maxAge: 600,
+  };
+  await app.register(cors, {
+    delegator: (req, cb) => {
+      cb(null, req.url.startsWith('/widget/') ? widgetCors : panelCors);
+    },
   });
   await app.register(cookie);
   await app.register(rateLimit, {
@@ -114,6 +128,7 @@ export async function buildApp(deps: AppDeps): Promise<BuiltApp> {
   conversationRoutes(app, ctx);
   syncRoutes(app, ctx);
   channelApiRoutes(app, ctx);
+  widgetRoutes(app, ctx);
   app.get('/openapi.json', { config: access.public }, () => app.swagger());
 
   // requestId também no header de resposta para correlação com os logs

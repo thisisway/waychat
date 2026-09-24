@@ -45,7 +45,7 @@ const aad = (inboxId: string) => `inbox:${inboxId}`;
 const newIdentitySecret = () => randomToken(32);
 const newPublicKey = () => `ibx_${randomToken(12)}`;
 
-function readConfig(
+export function readConfig(
   ctx: Ctx,
   row: { id: string; channelType: string; configEncrypted: string | null },
 ) {
