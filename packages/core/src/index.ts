@@ -212,4 +212,12 @@ export {
   type InboundEventRow,
   type WebhookIntake,
 } from './modules/channels/application/webhook.js';
+export {
+  claimWhatsAppSend,
+  outboundContentFor,
+  recordWhatsAppFailed,
+  recordWhatsAppSent,
+  SendPendingError,
+  type ClaimedSend,
+} from './modules/channels/application/outbound.js';
 export type { ChannelServices } from './context.js';

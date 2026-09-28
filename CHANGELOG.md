@@ -12,6 +12,7 @@ Formato baseado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/).
 - Conexão manual do WhatsApp Cloud API por inbox: config cifrada, segredos mostrados só pelos últimos 4 caracteres, rotação de token e do verify token.
 - Webhook assinado (`X-Hub-Signature-256` sobre o corpo bruto), gravado e deduplicado antes de processar; reentrega da Meta nunca cria evento nem mensagem duplicada. Processamento assíncrono numa fila própria (ADR 0010).
 - Processamento de entrada: todos os tipos de mensagem (texto, mídia, localização, contatos, reação, respostas interativas, citação), status de entrega avançando sem regredir, opt-out por palavra-chave, mídia baixada da Graph API e anexada com a mesma varredura de anexos da Fase 1.
+- Envio ao WhatsApp: texto e anexo únicos (imagem/vídeo/áudio/documento) pela resposta do atendente; idempotente mesmo sem chave de idempotência da Meta, reconciliando pelo webhook de status quando um envio fica ambíguo (ADR 0011); limite de taxa por número; erros da Meta traduzidos para português.
 
 ### Fase 1 — Núcleo de conversas
 

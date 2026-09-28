@@ -1,6 +1,8 @@
 # Plano — Fase 2 (WhatsApp Cloud API)
 
-Status: **em execução** — passos 1 (pacote de canais, fixtures e contrato), 2 (banco), 3 (conexão da inbox), 4 (ingresso do webhook) e 5 (processamento de entrada) concluídos. Base: branch `fase-1` (PR #11). Decisões abaixo foram tomadas por padrão, seguindo "faça como achar melhor"; as que dependem de você estão em "Perguntas em aberto".
+Status: **em execução** — passos 1 (pacote de canais, fixtures e contrato), 2 (banco), 3 (conexão da inbox), 4 (ingresso do webhook), 5 (processamento de entrada) e 6 (envio) concluídos. Base: branch `fase-1` (PR #11). Decisões abaixo foram tomadas por padrão, seguindo "faça como achar melhor"; as que dependem de você estão em "Perguntas em aberto".
+
+**Nota do passo 6:** hoje o envio cobre texto (resposta do atendente) e texto+um anexo (imagem/vídeo/áudio/documento, reaproveitando o upload da Fase 1). Reação, mensagens interativas e localização já têm o mapeamento de saída pronto em `send.ts`, mas nada no painel ainda cria uma mensagem de saída desses tipos — ficam prontos para quando essa UI existir. Template continua pendente do passo 7 (lança um erro claro e não repetível se chamado).
 
 ## Escopo (seção 8 do prompt)
 
@@ -27,7 +29,7 @@ Adaptador completo da **WhatsApp Business Platform — Cloud API oficial**: cone
 
 **D5. Mídia de entrada.** Job que baixa pelo media ID **imediatamente** (URL expira em minutos), valida tipo (mesma lista fechada + ogg/opus, webp de sticker, etc.) e tamanho (limites da Meta por tipo), grava no S3 e cria `attachments` com `uploader_type = 'contact'`, passando pela mesma varredura ClamAV da Fase 1. Enquanto não estiver `clean` a mensagem aparece com "Baixando/verificando anexo…". Falha definitiva vira mensagem com anexo `rejected` e motivo, nunca some em silêncio.
 
-**D6. Envio (fila + idempotência).** Mensagem de saída numa inbox WhatsApp nasce `queued`; o evento `message.created` (outbox) dispara o job `channel-send` (BullMQ, `jobId = message_id`). O worker: (1) marca `sending` com um contador de tentativas; (2) chama a Graph API enviando o **id da nossa mensagem em `biz_opaque_callback_data`**; (3) grava o `wamid` e passa a `sent`. A Meta não tem chave de idempotência; por isso, se o processo cai entre (2) e (3), a recuperação **não reenvia às cegas**: o job retomado vê `sending` sem `wamid`, espera até 2 min o webhook de status que devolve o nosso id (isso confirma o envio e recupera o `wamid`) e só reenvia se nada chegar. Risco residual (envio real sem webhook no prazo) registrado no ADR 0010 e coberto por teste de queda simulada.
+**D6. Envio (fila + idempotência).** Mensagem de saída numa inbox WhatsApp nasce `queued`; o evento `message.created` (outbox) dispara o job `channel-send` (BullMQ, `jobId = message_id`). O worker: (1) marca `sending` com um contador de tentativas; (2) chama a Graph API enviando o **id da nossa mensagem em `biz_opaque_callback_data`**; (3) grava o `wamid` e passa a `sent`. A Meta não tem chave de idempotência; por isso, se o processo cai entre (2) e (3), a recuperação **não reenvia às cegas**: o job retomado vê `sending` sem `wamid`, espera até 2 min o webhook de status que devolve o nosso id (isso confirma o envio e recupera o `wamid`) e só reenvia se nada chegar. Risco residual (envio real sem webhook no prazo) registrado no ADR 0011 e coberto por teste de queda simulada.
 
 **D7. Janela de 24 h.** Calculada no core a partir de `conversations.last_customer_message_at`. `GET /conversations/:id` passa a devolver `window: { open, expiresAt }` (só para canais com janela, via `capabilities()`). `sendMessage` com janela fechada e sem template → erro `window_closed` (422); a checagem é no servidor, a UI só reflete.
 

@@ -7,4 +7,5 @@ export {
   type GraphConfig,
 } from './graph.js';
 export { parseWebhook } from './parse.js';
+export { send, UnsupportedContentError } from './send.js';
 export { verifyChallenge, verifySignature } from './verify.js';

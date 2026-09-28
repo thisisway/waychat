@@ -1,3 +1,4 @@
+import { createSendQueue } from '@waychat/channels';
 import { coreConfigFromEnv, createCtx, fileServicesFromEnv, scanAttachment } from '@waychat/core';
 import { createDb } from '@waychat/db';
 import { createLogger, createRegistry, loadEnv, startMetricsServer } from '@waychat/shared';
@@ -15,6 +16,7 @@ import {
 import { listenOutbox } from './notify.js';
 import { startRelay } from './relay.js';
 import { startWhatsAppInboundWorker } from './whatsapp-inbound.js';
+import { handleMessageCreated, startWhatsAppSendWorker } from './whatsapp-outbound.js';
 
 const env = loadEnv();
 const log = createLogger(env.LOG_LEVEL, 'worker');
@@ -85,10 +87,23 @@ const whatsappWorker = startWhatsAppInboundWorker(
   },
 );
 
-// Fases seguintes registram aqui os handlers (automações, webhooks de saída, envio por canal...).
+// Envio pelo canal (hoje só WhatsApp): `message.created` de uma mensagem "queued" vira um job na fila própria,
+// com o próprio limitador de taxa e a reconciliação do ADR 0011 — nunca dentro do handler do evento em si.
+const sendQueue = createSendQueue(connection);
+const whatsappSendWorker = startWhatsAppSendWorker(
+  connection,
+  scanCtx,
+  redis,
+  { version: env.WHATSAPP_GRAPH_VERSION, baseUrl: env.WHATSAPP_GRAPH_BASE_URL },
+  (err) => {
+    log.error({ err }, 'falha ao enviar mensagem pelo WhatsApp; nova tentativa com backoff');
+  },
+);
+
+// Fases seguintes registram mais handlers aqui (automações, notificações...).
 const worker = startEventsWorker({
   connection,
-  handlers: {},
+  handlers: { 'message.created': handleMessageCreated(scanCtx, sendQueue) },
   deadLetter,
   onError: (err, job) => {
     metrics.handlerFailures.inc();
@@ -115,8 +130,10 @@ async function shutdown(signal: string): Promise<void> {
     await worker.close();
     await scanWorker.close();
     await whatsappWorker.close();
+    await whatsappSendWorker.close();
     await appDb.close();
     await queue.close();
+    await sendQueue.close();
     await deadLetter.close();
     await relayDb.close();
     metricsServer.close();

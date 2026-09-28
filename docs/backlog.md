@@ -29,3 +29,6 @@ Itens fora do escopo da fase em que apareceram.
 - WhatsApp: confirmação automática de opt-out ("você não receberá mais mensagens") ainda não é enviada — hoje só registra em `contact_opt_outs`; depende do passo 6 (envio).
 - WhatsApp: fila `channel-inbound` sem fila de mensagens mortas própria; um evento que esgota as 8 tentativas fica `received` para sempre, sem alerta. Avaliar quando o volume justificar.
 - WhatsApp: tipos de mídia fora da lista fixa de anexos (Office, ZIP, `audio/amr`, `video/3gpp`...) chegam mas o anexo é descartado; a mensagem fica sem o arquivo, sem avisar visivelmente o atendente.
+- WhatsApp: envio de reação, localização, contatos e mensagens interativas (botões/lista/CTA) já tem o mapeamento pronto em `send.ts`, mas nenhuma tela do painel cria esse tipo de mensagem de saída ainda — falta a UI.
+- WhatsApp: mídia de saída usa um link assinado de curta duração (a mesma URL de download do painel); trocar por upload prévio à biblioteca de mídia da Meta (`POST /{phone_number_id}/media`) se o S3 ficar fora do ar no momento em que a Meta busca o link virar um problema real.
+- WhatsApp: mais de um anexo por mensagem de saída falha de propósito (a Cloud API só aceita um); o compositor do painel não impede o atendente de tentar anexar vários numa conversa de WhatsApp.

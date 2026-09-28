@@ -351,6 +351,15 @@ export async function sendMessage(
           throw new DomainError('invalid_input', 'mensagem citada não pertence à conversa');
       }
 
+      // Canais com entrega assíncrona (hoje só o WhatsApp) nascem "queued": o worker manda pelo adaptador e só
+      // confirma quando a Graph API aceita. Nota interna nunca sai do WayChat, então continua "sent" na hora.
+      const [inbox] = await tx
+        .select({ channelType: inboxes.channelType })
+        .from(inboxes)
+        .where(eq(inboxes.id, conv.inboxId))
+        .limit(1);
+      const queued = !input.private && inbox?.channelType === 'whatsapp';
+
       const [row] = await tx
         .insert(messages)
         .values({
@@ -364,6 +373,7 @@ export async function sendMessage(
           private: input.private,
           replyToId: input.replyToId ?? null,
           clientMessageId: input.clientMessageId,
+          ...(queued ? { status: 'queued' } : {}),
           createdAt: nowMs,
         })
         .returning();

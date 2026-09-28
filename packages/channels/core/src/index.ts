@@ -204,8 +204,13 @@ export interface ChannelAdapter {
 
 export {
   createInboundQueue,
+  createSendQueue,
   enqueueInbound,
+  enqueueSend,
   INBOUND_QUEUE,
+  SEND_QUEUE,
   startInboundWorker,
+  startSendWorker,
   type InboundJob,
+  type SendJob,
 } from './queue.js';
