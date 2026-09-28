@@ -1,12 +1,6 @@
 import type { OutboundMessage } from '@waychat/channels';
 import { describe, expect, it, vi } from 'vitest';
-import {
-  classifyError,
-  GraphError,
-  send,
-  UnsupportedContentError,
-  type GraphConfig,
-} from './index.js';
+import { classifyError, GraphError, send, type GraphConfig } from './index.js';
 
 const cfg = (fetch: typeof globalThis.fetch): GraphConfig => ({
   accessToken: 'token-de-teste',
@@ -202,18 +196,58 @@ describe('send: tipos de conteúdo', () => {
     });
   });
 
-  it('template: ainda não suportado, erro classificado como não repetível', async () => {
+  it('template: nome, idioma, cabeçalho de mídia, variáveis do corpo e botão de resposta rápida', async () => {
     const fetch = vi.fn<typeof globalThis.fetch>(() => ok());
-    const err = await send(
-      { ...base, content: { type: 'template', name: 'x', language: 'pt_BR', components: [] } },
+    await send(
+      {
+        ...base,
+        content: {
+          type: 'template',
+          name: 'confirmacao_pedido',
+          language: 'pt_BR',
+          components: [
+            { type: 'header', parameters: [{ type: 'image', media: { id: 'media-1' } }] },
+            {
+              type: 'body',
+              parameters: [
+                { type: 'text', text: 'Maria' },
+                { type: 'text', text: '#123' },
+              ],
+            },
+            {
+              type: 'button',
+              index: 0,
+              subType: 'quick_reply',
+              parameters: [{ type: 'payload', payload: 'confirmar-123' }],
+            },
+          ],
+        },
+      },
       cfg(fetch),
-    ).catch((e: unknown) => e);
-    expect(err).toBeInstanceOf(UnsupportedContentError);
-    expect(fetch).not.toHaveBeenCalled(); // falha antes de qualquer chamada de rede
-    expect(classifyError(err)).toEqual({
-      retryable: false,
-      code: 'not_implemented',
-      userMessage: 'Este tipo de mensagem ainda não é suportado para envio.',
+    );
+    const body = sentBody(fetch);
+    expect(body).toMatchObject({
+      type: 'template',
+      template: {
+        name: 'confirmacao_pedido',
+        language: { code: 'pt_BR' },
+        components: [
+          { type: 'header', parameters: [{ type: 'image', image: { id: 'media-1' } }] },
+          {
+            type: 'body',
+            parameters: [
+              { type: 'text', text: 'Maria' },
+              { type: 'text', text: '#123' },
+            ],
+          },
+          {
+            type: 'button',
+            sub_type: 'quick_reply',
+            index: '0',
+            parameters: [{ type: 'payload', payload: 'confirmar-123' }],
+          },
+        ],
+      },
     });
   });
 });

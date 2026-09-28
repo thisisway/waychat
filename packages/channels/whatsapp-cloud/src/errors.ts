@@ -1,6 +1,5 @@
 import type { ClassifiedError } from '@waychat/channels';
 import { GraphError } from './graph.js';
-import { UnsupportedContentError } from './send.js';
 
 const rule = (retryable: boolean, code: string, userMessage: string): ClassifiedError => ({
   retryable,
@@ -99,13 +98,6 @@ const codeOf = (err: unknown): number | null => {
  * Desconhecido: falha de rede, 429 e HTTP 5xx valem nova tentativa; o resto não (evita reenviar o que a Meta recusou).
  */
 export function classifyError(err: unknown): ClassifiedError {
-  if (err instanceof UnsupportedContentError) {
-    return rule(
-      false,
-      'not_implemented',
-      'Este tipo de mensagem ainda não é suportado para envio.',
-    );
-  }
   const code = codeOf(err);
   if (code !== null) {
     const known = BY_CODE[code];

@@ -24,6 +24,7 @@ import { inboxRoutes } from './routes/inboxes.js';
 import { attachmentRoutes } from './routes/attachments.js';
 import { channelApiRoutes } from './routes/channel-api.js';
 import { syncRoutes } from './routes/sync.js';
+import { templateRoutes } from './routes/templates.js';
 import { webhookRoutes } from './routes/webhooks.js';
 import { whatsappRoutes } from './routes/whatsapp.js';
 import { widgetRoutes } from './routes/widget.js';
@@ -42,6 +43,8 @@ export interface AppDeps {
   realtime?: { feed: EventFeed; revalidateEveryMs?: number };
   /** `false` silencia os logs (testes). */
   logger?: boolean;
+  /** Injetável para teste (sincronização/criação de template chama a Graph API); padrão é o `fetch` global. */
+  graphFetch?: typeof fetch;
 }
 
 export interface BuiltApp {
@@ -134,6 +137,7 @@ export async function buildApp(deps: AppDeps): Promise<BuiltApp> {
   widgetRoutes(app, ctx);
   attachmentRoutes(app, ctx);
   whatsappRoutes(app, ctx);
+  templateRoutes(app, ctx, env, deps.graphFetch);
   webhookRoutes(app, ctx);
   app.get('/openapi.json', { config: access.public }, () => app.swagger());
 

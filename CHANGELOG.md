@@ -14,6 +14,7 @@ Formato baseado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/).
 - Processamento de entrada: todos os tipos de mensagem (texto, mídia, localização, contatos, reação, respostas interativas, citação), status de entrega avançando sem regredir, opt-out por palavra-chave, mídia baixada da Graph API e anexada com a mesma varredura de anexos da Fase 1.
 - Envio ao WhatsApp: texto e anexo únicos (imagem/vídeo/áudio/documento) pela resposta do atendente; idempotente mesmo sem chave de idempotência da Meta, reconciliando pelo webhook de status quando um envio fica ambíguo (ADR 0011); limite de taxa por número; erros da Meta traduzidos para português.
 - Janela de atendimento de 24h do WhatsApp: `GET /conversations/:id` mostra se está aberta e quando fecha; responder com a janela fechada é recusado (`window_closed`) — notas internas e os demais canais nunca são afetados.
+- Templates de mensagem do WhatsApp: sincronização paginada com a Graph API, criação pelo painel e atualização de status pelo webhook `message_template_status_update` (`GET/POST /inboxes/:id/templates`, `POST /inboxes/:id/templates/sync`); o adaptador já monta e envia o payload de template (variáveis, cabeçalho de mídia, botões).
 
 ### Fase 1 — Núcleo de conversas
 

@@ -7,5 +7,15 @@ export {
   type GraphConfig,
 } from './graph.js';
 export { parseWebhook } from './parse.js';
-export { send, UnsupportedContentError } from './send.js';
+export { send } from './send.js';
+export {
+  createTemplate,
+  listTemplates,
+  normalizeTemplateStatus,
+  type CreatedTemplate,
+  type CreateTemplateInput,
+  type RemoteTemplate,
+  type RemoteTemplateComponent,
+  type TemplateStatus,
+} from './templates.js';
 export { verifyChallenge, verifySignature } from './verify.js';

@@ -6,6 +6,7 @@ import { attachInboundMedia } from '../../attachments/application/attachments.js
 import { receiveInboundMessage } from '../../conversations/application/messages.js';
 import { enqueueEvent } from '../../events/application/enqueue.js';
 import type { WhatsAppTarget } from '../../inbox/application/whatsapp.js';
+import { upsertTemplateFromMeta } from './templates.js';
 
 const { messages, contactOptOuts } = schema;
 
@@ -262,9 +263,24 @@ export async function applyWhatsAppStatus(
   });
 }
 
+/** Webhook `message_template_status_update`: atualiza o status já gravado (não traz categoria nem componentes). */
+async function applyWhatsAppTemplateStatus(
+  ctx: Ctx,
+  target: WhatsAppTarget,
+  event: Extract<NormalizedEvent, { kind: 'template_status' }>,
+): Promise<void> {
+  await upsertTemplateFromMeta(ctx, target.accountId, target.inboxId, {
+    providerTemplateId: event.providerTemplateId,
+    name: event.name,
+    language: event.language,
+    status: event.status,
+    reason: event.reason ?? null,
+  });
+}
+
 /**
- * Roteador de um evento já deduplicado (`inbound_events`). `template_status` (sincronização de templates) e
- * `quality` (rating/tier do número) ficam para os passos 7 e 9 — aqui só mensagem e status de entrega.
+ * Roteador de um evento já deduplicado (`inbound_events`). `quality` (rating/tier do número) fica para o passo 9
+ * — aqui mensagem, status de entrega e status de template.
  */
 export async function processWhatsAppEvent(
   ctx: Ctx,
@@ -278,6 +294,7 @@ export async function processWhatsAppEvent(
     case 'status':
       return applyWhatsAppStatus(ctx, target, event);
     case 'template_status':
+      return applyWhatsAppTemplateStatus(ctx, target, event);
     case 'quality':
       return;
   }

@@ -16,6 +16,10 @@ let routeAccess: Map<string, Access>;
 let coreCtx: Ctx;
 const fileServices = testFiles();
 const channelStub = { jobs: [] as { eventId: string }[], fail: false };
+/** Sincronização/criação de template chama a Graph API: cada teste define a resposta esperada. */
+let graphStub: typeof fetch = () =>
+  Promise.reject(new Error('graphFetch não configurado neste teste'));
+const graphFetch: typeof fetch = (url, init) => graphStub(url, init);
 const registry = new Registry();
 let clock = Date.UTC(2026, 0, 15, 12, 0, 0);
 const step = (s: number) => (clock += s * 1000);
@@ -115,7 +119,7 @@ beforeAll(async () => {
       },
     },
   );
-  const built = await buildApp({ env, ctx: coreCtx, logger: false, metrics: registry });
+  const built = await buildApp({ env, ctx: coreCtx, logger: false, metrics: registry, graphFetch });
   app = built.app;
   routeAccess = built.routeAccess;
   await app.ready();
@@ -1438,5 +1442,134 @@ describe('webhook do WhatsApp', () => {
   it('as rotas do webhook são públicas de propósito (a autenticação é a assinatura)', () => {
     expect(routeAccess.get('POST /webhooks/whatsapp/:key')?.kind).toBe('public');
     expect(routeAccess.get('GET /webhooks/whatsapp/:key')?.kind).toBe('public');
+  });
+});
+
+describe('templates do WhatsApp', () => {
+  const WABA = '102290129340398';
+  const json = (body: unknown, status = 200) =>
+    Promise.resolve(new Response(JSON.stringify(body), { status }));
+
+  async function canal() {
+    const { s: owner } = await register();
+    const roles = (await call(owner, 'GET', '/roles')).json().items as {
+      id: string;
+      name: string;
+    }[];
+    const email = `ag-${uniq()}@exemplo.com`;
+    await call(owner, 'POST', '/members', {
+      email,
+      name: 'Ana',
+      password: PASSWORD,
+      role_id: roles.find((r) => r.name === 'Agente')?.id,
+    });
+    const addr = ip();
+    const agent = sessionFrom(
+      await call(null, 'POST', '/auth/login', { email, password: PASSWORD }, { ip: addr }),
+      addr,
+    );
+    const res = await call(owner, 'POST', '/inboxes/whatsapp', {
+      name: 'WhatsApp',
+      phone_number_id: '106540352242922',
+      waba_id: WABA,
+      access_token: 'EAAGtokenDeAcessoDeTesteDeTesteDeTeste',
+      app_secret: 'segredo-do-app-da-meta-0123456789',
+    });
+    return { owner, agent, inboxId: res.json().inbox.id as string };
+  }
+
+  it('lista vazia antes de qualquer sincronização', async () => {
+    const c = await canal();
+    const res = await call(c.owner, 'GET', `/inboxes/${c.inboxId}/templates`);
+    expect(res.statusCode, res.body).toBe(200);
+    expect(res.json().templates).toEqual([]);
+  });
+
+  it('sincroniza da Graph API: grava o que veio, inclusive paginado', async () => {
+    const c = await canal();
+    const fetch = (url: string) => {
+      if (url.includes('after=p2'))
+        return json({
+          data: [
+            {
+              id: '2',
+              name: 'lembrete',
+              language: 'pt_BR',
+              category: 'UTILITY',
+              status: 'PENDING',
+              components: [{ type: 'BODY', text: 'Oi' }],
+            },
+          ],
+        });
+      return json({
+        data: [
+          {
+            id: '1',
+            name: 'boas_vindas',
+            language: 'pt_BR',
+            category: 'MARKETING',
+            status: 'APPROVED',
+            components: [{ type: 'BODY', text: 'Bem-vindo {{1}}' }],
+          },
+        ],
+        paging: { next: `https://graph.facebook.com/v23.0/${WABA}/message_templates?after=p2` },
+      });
+    };
+    graphStub = fetch as unknown as typeof globalThis.fetch;
+    const res = await call(c.owner, 'POST', `/inboxes/${c.inboxId}/templates/sync`);
+    expect(res.statusCode, res.body).toBe(200);
+    const names = (res.json().templates as { name: string; status: string }[])
+      .map((t) => `${t.name}:${t.status}`)
+      .sort();
+    expect(names).toEqual(['boas_vindas:approved', 'lembrete:pending']);
+
+    const again = await call(c.owner, 'GET', `/inboxes/${c.inboxId}/templates`);
+    expect(again.json().templates).toHaveLength(2);
+  });
+
+  it('cria um template: chama a Graph API e grava com o id e o status devolvidos', async () => {
+    const c = await canal();
+    graphStub = () => json({ id: '999', status: 'PENDING', category: 'UTILITY' });
+    const res = await call(c.owner, 'POST', `/inboxes/${c.inboxId}/templates`, {
+      name: 'confirmacao',
+      language: 'pt_BR',
+      category: 'UTILITY',
+      components: [{ type: 'BODY', text: 'Olá {{1}}, seu pedido {{2}} foi confirmado.' }],
+    });
+    expect(res.statusCode, res.body).toBe(201);
+    expect(res.json()).toMatchObject({
+      providerTemplateId: '999',
+      name: 'confirmacao',
+      language: 'pt_BR',
+      category: 'UTILITY',
+      status: 'pending',
+    });
+  });
+
+  it('só quem gerencia caixas de entrada lista, sincroniza ou cria', async () => {
+    const c = await canal();
+    graphStub = () => json({ data: [] });
+    expect((await call(c.agent, 'GET', `/inboxes/${c.inboxId}/templates`)).statusCode).toBe(403);
+    expect((await call(c.agent, 'POST', `/inboxes/${c.inboxId}/templates/sync`)).statusCode).toBe(
+      403,
+    );
+    expect(
+      (
+        await call(c.agent, 'POST', `/inboxes/${c.inboxId}/templates`, {
+          name: 'x',
+          language: 'pt_BR',
+          category: 'UTILITY',
+          components: [{ type: 'BODY', text: 'x' }],
+        })
+      ).statusCode,
+    ).toBe(403);
+  });
+
+  it('caixa de outro canal: 404', async () => {
+    const { s: owner } = await register();
+    const widget = (
+      await call(owner, 'POST', '/inboxes', { name: 'Site', channel_type: 'widget' })
+    ).json().inbox.id as string;
+    expect((await call(owner, 'POST', `/inboxes/${widget}/templates/sync`)).statusCode).toBe(404);
   });
 });

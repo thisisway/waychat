@@ -9,10 +9,12 @@ import {
   authenticate,
   connectWhatsApp,
   listMessages,
+  listWhatsAppTemplates,
   loadWhatsAppByPublicKey,
   login,
   processWhatsAppEvent,
   registerAccount,
+  upsertTemplateFromMeta,
   type Actor,
   type WhatsAppTarget,
 } from './index.js';
@@ -373,7 +375,7 @@ describe('status de entrega do WhatsApp', () => {
     ).resolves.toBeUndefined();
   });
 
-  it('eventos de qualidade e status de template ainda não fazem nada (passos 7 e 9), mas não lançam', async () => {
+  it('evento de qualidade ainda não faz nada (passo 9), mas não lança', async () => {
     const s = await setup();
     await expect(
       processWhatsAppEvent(ctx, s.target, {
@@ -383,15 +385,74 @@ describe('status de entrega do WhatsApp', () => {
         event: 'FLAGGED',
       }),
     ).resolves.toBeUndefined();
-    await expect(
-      processWhatsAppEvent(ctx, s.target, {
-        kind: 'template_status',
-        wabaId: s.target.config.wabaId,
-        providerTemplateId: '1',
-        name: 'x',
+  });
+});
+
+describe('template_status (D8)', () => {
+  const templateStatus = (
+    target: WhatsAppTarget,
+    over: {
+      providerTemplateId?: string;
+      name?: string;
+      status?: 'approved' | 'rejected' | 'pending' | 'paused' | 'disabled' | 'other';
+      reason?: string;
+    } = {},
+  ): Extract<NormalizedEvent, { kind: 'template_status' }> => ({
+    kind: 'template_status',
+    wabaId: target.config.wabaId,
+    providerTemplateId: over.providerTemplateId ?? '1001',
+    name: over.name ?? 'boas_vindas',
+    language: 'pt_BR',
+    status: over.status ?? 'approved',
+    ...(over.reason ? { reason: over.reason } : {}),
+  });
+
+  it('webhook de status cria o template (sem categoria/componentes ainda: sync nunca rodou)', async () => {
+    const s = await setup();
+    await processWhatsAppEvent(ctx, s.target, templateStatus(s.target, { status: 'pending' }));
+    const rows = await listWhatsAppTemplates(ctx, s.owner, s.inbox.id);
+    expect(rows).toMatchObject([
+      {
+        providerTemplateId: '1001',
+        name: 'boas_vindas',
         language: 'pt_BR',
-        status: 'approved',
-      }),
-    ).resolves.toBeUndefined();
+        category: 'UTILITY',
+        status: 'pending',
+        reason: null,
+        components: [],
+      },
+    ]);
+  });
+
+  it('reentrega/avanço de status atualiza a mesma linha (chave inbox+nome+idioma), sem duplicar', async () => {
+    const s = await setup();
+    await processWhatsAppEvent(ctx, s.target, templateStatus(s.target, { status: 'pending' }));
+    await processWhatsAppEvent(
+      ctx,
+      s.target,
+      templateStatus(s.target, { status: 'rejected', reason: 'INVALID_FORMAT' }),
+    );
+    const rows = await listWhatsAppTemplates(ctx, s.owner, s.inbox.id);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ status: 'rejected', reason: 'INVALID_FORMAT' });
+  });
+
+  it('status-only não apaga categoria/componentes já sincronizados antes', async () => {
+    const s = await setup();
+    await upsertTemplateFromMeta(ctx, s.target.accountId, s.target.inboxId, {
+      providerTemplateId: '1001',
+      name: 'boas_vindas',
+      language: 'pt_BR',
+      category: 'MARKETING',
+      status: 'pending',
+      components: [{ type: 'BODY', text: 'Olá {{1}}' }],
+    });
+    await processWhatsAppEvent(ctx, s.target, templateStatus(s.target, { status: 'approved' }));
+    const rows = await listWhatsAppTemplates(ctx, s.owner, s.inbox.id);
+    expect(rows[0]).toMatchObject({
+      status: 'approved',
+      category: 'MARKETING',
+      components: [{ type: 'BODY', text: 'Olá {{1}}' }],
+    });
   });
 });

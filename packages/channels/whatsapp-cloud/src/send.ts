@@ -3,18 +3,25 @@ import type {
   OutboundMedia,
   OutboundMessage,
   SendResult,
+  TemplateComponentValues,
 } from '@waychat/channels';
 import { graphRequest, type GraphConfig } from './graph.js';
 
-/** `content.type === 'template'`: sincronização e envio de templates ficam para o passo 7. */
-export class UnsupportedContentError extends Error {
-  constructor(contentType: string) {
-    super(`tipo de conteúdo ainda não suportado no envio: ${contentType}`);
-    this.name = 'UnsupportedContentError';
-  }
-}
-
 const media = (m: OutboundMedia) => ('id' in m ? { id: m.id } : { link: m.link });
+
+const templateParameter = (p: TemplateComponentValues['parameters'][number]) => {
+  switch (p.type) {
+    case 'text':
+      return { type: 'text', text: p.text };
+    case 'payload':
+      return { type: 'payload', payload: p.payload };
+    default:
+      return {
+        type: p.type,
+        [p.type]: { ...media(p.media), ...(p.fileName ? { filename: p.fileName } : {}) },
+      };
+  }
+};
 
 function payloadFor(content: OutboundContent): Record<string, unknown> {
   switch (content.type) {
@@ -126,7 +133,19 @@ function payloadFor(content: OutboundContent): Record<string, unknown> {
         },
       };
     case 'template':
-      throw new UnsupportedContentError('template');
+      return {
+        type: 'template',
+        template: {
+          name: content.name,
+          language: { code: content.language },
+          components: content.components.map((c) => ({
+            type: c.type,
+            ...(c.subType ? { sub_type: c.subType } : {}),
+            ...(c.index !== undefined ? { index: String(c.index) } : {}),
+            parameters: c.parameters.map(templateParameter),
+          })),
+        },
+      };
   }
 }
 

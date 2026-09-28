@@ -225,4 +225,10 @@ export {
   WHATSAPP_WINDOW_HOURS,
   type ServiceWindow,
 } from './modules/channels/application/window.js';
+export {
+  listWhatsAppTemplates,
+  upsertTemplateFromMeta,
+  type RemoteTemplateData,
+  type TemplateView,
+} from './modules/channels/application/templates.js';
 export type { ChannelServices } from './context.js';
