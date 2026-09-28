@@ -10,10 +10,13 @@ import {
   claimWhatsAppSend,
   completeUpload,
   connectWhatsApp,
+  createInbox,
+  getConversation,
   loadWhatsAppTarget,
   login,
   outboundContentFor,
   processWhatsAppEvent,
+  receiveInboundMessage,
   recordWhatsAppFailed,
   recordWhatsAppSent,
   registerAccount,
@@ -384,5 +387,70 @@ describe('recordWhatsAppSent / recordWhatsAppFailed', () => {
       error: 'A janela de 24 horas fechou.',
       error_code: 'window_closed',
     });
+  });
+});
+
+describe('janela de 24h (D7)', () => {
+  it('getConversation: aberta logo após a mensagem do cliente; null para canal sem janela', async () => {
+    const s = await setup();
+    const conv = await conversationOf(s.target);
+    const detail = await getConversation(ctx, s.owner, conv.conversation_id);
+    expect(detail.window).toMatchObject({ open: true });
+    expect(detail.window?.expiresAt).toBeInstanceOf(Date);
+
+    const widget = await createInbox(ctx, s.owner, { name: 'Site', channelType: 'widget' });
+    const inbound = await receiveInboundMessage(ctx, {
+      accountId: s.accountId,
+      inboxId: widget.inbox.id,
+      identity: { channel: 'widget', externalId: 'v1', name: 'Visitante' },
+      content: 'oi',
+    });
+    const widgetDetail = await getConversation(ctx, s.owner, inbound.conversationId);
+    expect(widgetDetail.window).toBeNull();
+  });
+
+  it('sendMessage: janela fechada bloqueia texto/mídia, mas nunca uma nota interna', async () => {
+    const s = await setup();
+    const conv = await conversationOf(s.target);
+    await t.owner.pool.query(
+      "update conversations set last_customer_message_at = now() - interval '25 hours' where id = $1",
+      [conv.conversation_id],
+    );
+    await expect(
+      sendMessage(ctx, s.owner, {
+        conversationId: conv.conversation_id,
+        content: 'oi de novo',
+        clientMessageId: crypto.randomUUID(),
+      }),
+    ).rejects.toMatchObject({ code: 'window_closed' });
+    // nota interna nunca sai para o cliente: não é bloqueada pela janela
+    const note = await sendMessage(ctx, s.owner, {
+      conversationId: conv.conversation_id,
+      content: 'nota apesar da janela fechada',
+      private: true,
+      clientMessageId: crypto.randomUUID(),
+    });
+    expect(note.message.status).toBe('sent');
+  });
+
+  it('sendMessage: canal sem janela nunca é bloqueado, mesmo sem mensagem recente do cliente', async () => {
+    const s = await setup();
+    const widget = await createInbox(ctx, s.owner, { name: 'Site', channelType: 'widget' });
+    const inbound = await receiveInboundMessage(ctx, {
+      accountId: s.accountId,
+      inboxId: widget.inbox.id,
+      identity: { channel: 'widget', externalId: 'v1', name: 'Visitante' },
+      content: 'oi',
+    });
+    await t.owner.pool.query(
+      "update conversations set last_customer_message_at = now() - interval '200 hours' where id = $1",
+      [inbound.conversationId],
+    );
+    const reply = await sendMessage(ctx, s.owner, {
+      conversationId: inbound.conversationId,
+      content: 'sem problema',
+      clientMessageId: crypto.randomUUID(),
+    });
+    expect(reply.message.status).toBe('sent');
   });
 });

@@ -10,6 +10,7 @@ import {
   type AttachmentView,
 } from '../../attachments/application/attachments.js';
 import { assertCan, type Actor } from '../../authz/application/actor.js';
+import { serviceWindowFor } from '../../channels/application/window.js';
 import { findOrCreateContactByIdentity } from '../../contacts/application/contacts.js';
 import { enqueueEvent } from '../../events/application/enqueue.js';
 import { loadVisibleConversation, nowMs } from './access.js';
@@ -359,6 +360,14 @@ export async function sendMessage(
         .where(eq(inboxes.id, conv.inboxId))
         .limit(1);
       const queued = !input.private && inbox?.channelType === 'whatsapp';
+
+      // Fora da janela de 24h, o WhatsApp só aceita um template aprovado (D7) — hoje o envio de template ainda
+      // não existe (passo 7b), então uma janela fechada bloqueia qualquer resposta de texto/mídia.
+      // `queued` só é true para canal WhatsApp: dá para chamar `serviceWindowFor` já sabendo o canal.
+      if (queued) {
+        const win = serviceWindowFor('whatsapp', conv.lastCustomerMessageAt, ctx.now());
+        if (win && !win.open) throw new DomainError('window_closed');
+      }
 
       const [row] = await tx
         .insert(messages)

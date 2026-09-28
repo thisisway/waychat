@@ -53,6 +53,8 @@ const detail = summary.extend({
   createdAt: z.date(),
   inbox: z.object({ id: z.uuid(), name: z.string(), channelType: z.string() }),
   labels: z.array(z.object({ id: z.uuid(), name: z.string(), color: z.string() })),
+  /** `null` para canais sem janela de atendimento (hoje, todos menos o WhatsApp). */
+  window: z.object({ open: z.boolean(), expiresAt: z.date().nullable() }).nullable(),
 });
 
 const message = z.object({

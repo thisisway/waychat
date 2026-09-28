@@ -1,8 +1,10 @@
 # Plano — Fase 2 (WhatsApp Cloud API)
 
-Status: **em execução** — passos 1 (pacote de canais, fixtures e contrato), 2 (banco), 3 (conexão da inbox), 4 (ingresso do webhook), 5 (processamento de entrada) e 6 (envio) concluídos. Base: branch `fase-1` (PR #11). Decisões abaixo foram tomadas por padrão, seguindo "faça como achar melhor"; as que dependem de você estão em "Perguntas em aberto".
+Status: **em execução** — passos 1 (pacote de canais, fixtures e contrato), 2 (banco), 3 (conexão da inbox), 4 (ingresso do webhook), 5 (processamento de entrada), 6 (envio) e a parte de janela do passo 7 concluídos; falta a parte de templates do passo 7. Base: branch `fase-1` (PR #11). Decisões abaixo foram tomadas por padrão, seguindo "faça como achar melhor"; as que dependem de você estão em "Perguntas em aberto".
 
-**Nota do passo 6:** hoje o envio cobre texto (resposta do atendente) e texto+um anexo (imagem/vídeo/áudio/documento, reaproveitando o upload da Fase 1). Reação, mensagens interativas e localização já têm o mapeamento de saída pronto em `send.ts`, mas nada no painel ainda cria uma mensagem de saída desses tipos — ficam prontos para quando essa UI existir. Template continua pendente do passo 7 (lança um erro claro e não repetível se chamado).
+**Nota do passo 6:** hoje o envio cobre texto (resposta do atendente) e texto+um anexo (imagem/vídeo/áudio/documento, reaproveitando o upload da Fase 1). Reação, mensagens interativas e localização já têm o mapeamento de saída pronto em `send.ts`, mas nada no painel ainda cria uma mensagem de saída desses tipos — ficam prontos para quando essa UI existir. Template continua pendente da parte de templates do passo 7 (lança um erro claro e não repetível se chamado).
+
+**Nota do passo 7 (janela):** `GET /conversations/:id` devolve `window: { open, expiresAt } | null` (D7); `sendMessage` recusa com `window_closed` (422) quando a janela do WhatsApp está fechada — nota interna nunca é bloqueada, e canais sem janela nunca são afetados. Como o envio de template ainda não existe, hoje uma janela fechada bloqueia qualquer resposta; a exceção "com template pode responder mesmo fechada" só passa a valer quando a parte de templates estiver pronta.
 
 ## Escopo (seção 8 do prompt)
 

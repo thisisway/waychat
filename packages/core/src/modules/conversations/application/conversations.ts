@@ -13,6 +13,7 @@ import {
   seesAllInboxes,
 } from './access.js';
 import { decodeCursor } from './messages.js';
+import { serviceWindowFor, type ServiceWindow } from '../../channels/application/window.js';
 
 const {
   conversations,
@@ -48,6 +49,8 @@ export interface ConversationDetail extends ConversationSummary {
   createdAt: Date;
   inbox: { id: string; name: string; channelType: string };
   labels: { id: string; name: string; color: string }[];
+  /** `null` para canais sem janela de atendimento (hoje, todos menos o WhatsApp). */
+  window: ServiceWindow | null;
 }
 
 const encodeActivityCursor = (at: Date, id: string) =>
@@ -240,6 +243,7 @@ export async function getConversation(
         ...summarySelect(actor),
         inboxName: inboxes.name,
         inboxChannel: inboxes.channelType,
+        lastCustomerMessageAt: conversations.lastCustomerMessageAt,
       })
       .from(conversations)
       .innerJoin(contacts, eq(contacts.id, conversations.contactId))
@@ -260,6 +264,7 @@ export async function getConversation(
       createdAt: row.createdAt,
       inbox: { id: row.inboxId, name: row.inboxName, channelType: row.inboxChannel },
       labels: ls,
+      window: serviceWindowFor(row.inboxChannel, row.lastCustomerMessageAt, ctx.now()),
     };
   });
 }

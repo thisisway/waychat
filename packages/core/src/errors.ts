@@ -35,4 +35,5 @@ export type DomainErrorCode =
   | 'contact_in_use'
   | 'api_key_invalid'
   | 'inbox_disabled'
-  | 'rate_limited';
+  | 'rate_limited'
+  | 'window_closed';

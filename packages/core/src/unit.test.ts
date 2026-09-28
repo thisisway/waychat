@@ -6,6 +6,7 @@ import { lockSeconds } from './modules/identity/application/login.js';
 import { slugify } from './modules/identity/application/register-account.js';
 import { assertPasswordPolicy } from './modules/identity/domain/password-policy.js';
 import { mapWhatsAppContent } from './modules/channels/application/inbound.js';
+import { serviceWindowFor } from './modules/channels/application/window.js';
 import { DomainError } from './errors.js';
 
 const key = () => randomBytes(32).toString('base64');
@@ -202,5 +203,33 @@ describe('mapWhatsAppContent (formato da Meta -> registro do WayChat)', () => {
       contentAttributes: { provider_type: 'order', detail: 'não tratado' },
       media: null,
     });
+  });
+});
+
+describe('serviceWindowFor (janela de 24h do WhatsApp, D7)', () => {
+  const now = new Date('2026-01-15T12:00:00.000Z');
+
+  it('canais sem janela: null, mesmo com mensagem recente do cliente', () => {
+    expect(serviceWindowFor('widget', now, now)).toBeNull();
+    expect(serviceWindowFor('api', now, now)).toBeNull();
+  });
+
+  it('WhatsApp: aberta dentro de 24h, fechada depois', () => {
+    const dez23hAtras = new Date(now.getTime() - 23 * 3_600_000);
+    const dez25hAtras = new Date(now.getTime() - 25 * 3_600_000);
+    expect(serviceWindowFor('whatsapp', dez23hAtras, now)).toEqual({
+      open: true,
+      expiresAt: new Date(dez23hAtras.getTime() + 24 * 3_600_000),
+    });
+    expect(serviceWindowFor('whatsapp', dez25hAtras, now)?.open).toBe(false);
+  });
+
+  it('exatamente no limite das 24h: já fechada (o limite não conta como aberto)', () => {
+    const exato24h = new Date(now.getTime() - 24 * 3_600_000);
+    expect(serviceWindowFor('whatsapp', exato24h, now)?.open).toBe(false);
+  });
+
+  it('contato nunca escreveu: fechada, sem data de expiração', () => {
+    expect(serviceWindowFor('whatsapp', null, now)).toEqual({ open: false, expiresAt: null });
   });
 });

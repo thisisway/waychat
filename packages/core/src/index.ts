@@ -220,4 +220,9 @@ export {
   SendPendingError,
   type ClaimedSend,
 } from './modules/channels/application/outbound.js';
+export {
+  serviceWindowFor,
+  WHATSAPP_WINDOW_HOURS,
+  type ServiceWindow,
+} from './modules/channels/application/window.js';
 export type { ChannelServices } from './context.js';
