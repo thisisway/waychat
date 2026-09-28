@@ -36,6 +36,12 @@ export const envSchema = z.object({
   /** Antivírus (clamd) dos anexos. Obrigatório em produção; em desenvolvimento, sem ele os anexos passam sem varredura. */
   CLAMAV_HOST: z.preprocess(emptyToUndefined, z.string().optional()),
   CLAMAV_PORT: z.coerce.number().int().min(1).max(65535).default(3310),
+  /** Graph API da Meta (WhatsApp Cloud). Versão e endereço configuráveis (o endereço muda nos testes). */
+  WHATSAPP_GRAPH_VERSION: z
+    .string()
+    .regex(/^v\d+\.\d+$/)
+    .default('v23.0'),
+  WHATSAPP_GRAPH_BASE_URL: z.url().default('https://graph.facebook.com'),
   MASTER_KEY: base64Key32,
   /** Chaves antigas (separadas por vírgula) só para DECIFRAR durante uma rotação. */
   MASTER_KEY_PREVIOUS: z.preprocess(

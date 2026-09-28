@@ -1,9 +1,11 @@
 import { randomBytes } from 'node:crypto';
+import type { InboundContent } from '@waychat/channels';
 import { describe, expect, it } from 'vitest';
 import { Keyring } from './crypto/envelope.js';
 import { lockSeconds } from './modules/identity/application/login.js';
 import { slugify } from './modules/identity/application/register-account.js';
 import { assertPasswordPolicy } from './modules/identity/domain/password-policy.js';
+import { mapWhatsAppContent } from './modules/channels/application/inbound.js';
 import { DomainError } from './errors.js';
 
 const key = () => randomBytes(32).toString('base64');
@@ -104,5 +106,101 @@ describe('slugify', () => {
   it('remove acentos e símbolos', () => {
     expect(slugify('  Açaí & Cia. Ltda!  ')).toBe('acai-cia-ltda');
     expect(slugify('!!!')).toBe('conta');
+  });
+});
+
+describe('mapWhatsAppContent (formato da Meta -> registro do WayChat)', () => {
+  const media = { id: '1001', mimeType: 'image/jpeg', sha256: 'abc' };
+
+  it('texto vai direto para content, sem atributos', () => {
+    expect(mapWhatsAppContent({ type: 'text', body: 'Olá' })).toEqual({
+      type: 'text',
+      content: 'Olá',
+      contentAttributes: {},
+      media: null,
+    });
+  });
+
+  it('imagem/vídeo/documento levam a legenda em content e a mídia para baixar', () => {
+    const c: InboundContent = { type: 'image', media, caption: 'Foto' };
+    expect(mapWhatsAppContent(c)).toEqual({
+      type: 'image',
+      content: 'Foto',
+      contentAttributes: {},
+      media,
+    });
+    expect(mapWhatsAppContent({ type: 'document', media }).content).toBe(''); // sem legenda
+  });
+
+  it('figurinha guarda se é animada', () => {
+    expect(
+      mapWhatsAppContent({ type: 'sticker', media, animated: true }).contentAttributes,
+    ).toEqual({
+      animated: true,
+    });
+  });
+
+  it('áudio vira "voice" quando é mensagem de voz, "audio" caso contrário', () => {
+    expect(mapWhatsAppContent({ type: 'audio', media, voice: true }).type).toBe('voice');
+    expect(mapWhatsAppContent({ type: 'audio', media, voice: false }).type).toBe('audio');
+  });
+
+  it('localização e contatos vão inteiros em contentAttributes, sem texto', () => {
+    expect(
+      mapWhatsAppContent({ type: 'location', latitude: -23.5, longitude: -46.6, name: 'Sé' }),
+    ).toEqual({
+      type: 'location',
+      content: '',
+      contentAttributes: { latitude: -23.5, longitude: -46.6, name: 'Sé' },
+      media: null,
+    });
+    const contacts = [{ name: 'João', phones: [], emails: [] }];
+    expect(mapWhatsAppContent({ type: 'contacts', contacts }).contentAttributes).toEqual({
+      contacts,
+    });
+  });
+
+  it('reação leva o emoji em content e o alvo em contentAttributes; remoção tem emoji null', () => {
+    expect(
+      mapWhatsAppContent({ type: 'reaction', targetProviderId: 'wamid.1', emoji: '👍' }),
+    ).toEqual({
+      type: 'reaction',
+      content: '👍',
+      contentAttributes: { target_provider_id: 'wamid.1', emoji: '👍' },
+      media: null,
+    });
+    expect(
+      mapWhatsAppContent({ type: 'reaction', targetProviderId: 'wamid.1', emoji: null }).content,
+    ).toBe('');
+  });
+
+  it('respostas de botão/lista e botão de template levam o título/texto em content', () => {
+    expect(mapWhatsAppContent({ type: 'button_reply', replyId: 'a', title: 'Sim' })).toEqual({
+      type: 'button_reply',
+      content: 'Sim',
+      contentAttributes: { reply_id: 'a' },
+      media: null,
+    });
+    expect(
+      mapWhatsAppContent({ type: 'list_reply', replyId: 'b', title: 'Plano', description: 'R$ 10' })
+        .contentAttributes,
+    ).toEqual({ reply_id: 'b', description: 'R$ 10' });
+    expect(mapWhatsAppContent({ type: 'button', text: 'Confirmar', payload: 'OK' })).toEqual({
+      type: 'button',
+      content: 'Confirmar',
+      contentAttributes: { payload: 'OK' },
+      media: null,
+    });
+  });
+
+  it('tipo não suportado guarda o tipo original e o detalhe, sem texto', () => {
+    expect(
+      mapWhatsAppContent({ type: 'unsupported', providerType: 'order', detail: 'não tratado' }),
+    ).toEqual({
+      type: 'unsupported',
+      content: '',
+      contentAttributes: { provider_type: 'order', detail: 'não tratado' },
+      media: null,
+    });
   });
 });

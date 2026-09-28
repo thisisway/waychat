@@ -1,6 +1,6 @@
 # Plano — Fase 2 (WhatsApp Cloud API)
 
-Status: **em execução** — passos 1 (pacote de canais, fixtures e contrato), 2 (banco), 3 (conexão da inbox) e 4 (ingresso do webhook) concluídos. Base: branch `fase-1` (PR #11). Decisões abaixo foram tomadas por padrão, seguindo "faça como achar melhor"; as que dependem de você estão em "Perguntas em aberto".
+Status: **em execução** — passos 1 (pacote de canais, fixtures e contrato), 2 (banco), 3 (conexão da inbox), 4 (ingresso do webhook) e 5 (processamento de entrada) concluídos. Base: branch `fase-1` (PR #11). Decisões abaixo foram tomadas por padrão, seguindo "faça como achar melhor"; as que dependem de você estão em "Perguntas em aberto".
 
 ## Escopo (seção 8 do prompt)
 
@@ -37,7 +37,9 @@ Adaptador completo da **WhatsApp Business Platform — Cloud API oficial**: cone
 
 **D10. Opt-out e recibos.** Palavras-chave configuráveis por inbox (padrão `SAIR`, `PARAR`) registram `contact_opt_outs` (canal + contato, com o texto e a data) e respondem com a confirmação configurável; campanhas (Fase 5) vão consultar essa tabela. Marcar como lida e indicador de digitação acontecem quando o atendente abre/responde a conversa, ligáveis por inbox.
 
-**D11. Testes sem a Meta.** Um servidor Graph API falso (`packages/channels/whatsapp-cloud/src/testing/fake-graph.ts`) simula envio, mídia, templates, throttling e falhas, para os testes de contrato e de queda do worker. A conexão real com um número de teste fica como roteiro manual (`docs/runbooks/whatsapp-conexao.md`).
+**D11. Testes sem a Meta.** Testes de contrato (`parseWebhook`) usam fixtures reais em `__fixtures__`; testes do cliente Graph (`graph.ts`) e do worker injetam um `fetch` fake por teste (`GraphConfig.fetch`), sem um servidor HTTP de mentira — mais simples e cobre os mesmos casos (sucesso, erro, timeout, tamanho mentiroso). Um servidor Graph API falso completo (para simular envio/templates/throttling de ponta a ponta) fica para o passo 6, se a complexidade do teste de envio justificar. A conexão real com um número de teste fica como roteiro manual (`docs/runbooks/whatsapp-conexao.md`).
+
+**D12. Onde vive o download de mídia.** `packages/core` não fala com a Graph API (só sabe processar bytes já em mãos): quem baixa é o WORKER, antes de chamar `processWhatsAppEvent(ctx, target, event, media?)`. Isso mantém o `core` livre de HTTP e do SDK da Meta, e deixa o download fora de qualquer transação do banco. Se o download falhar, a exceção sobe e o BullMQ tenta de novo (backoff); a linha em `inbound_events` continua `received` até um processamento completo com sucesso — nunca fica "meio processada". A extensão do arquivo é inferida do `mime_type` que a própria Meta informa (não do que o cliente final declarou); sem uma extensão reconhecida, a assinatura do arquivo não bate e o anexo é descartado (a mensagem continua sendo gravada, só sem o anexo — nunca some em silêncio).
 
 ## Modelo de dados (migração `0013+`)
 
@@ -57,7 +59,7 @@ Adaptador completo da **WhatsApp Business Platform — Cloud API oficial**: cone
 7. **Janela e templates:** cálculo da janela, `window_closed`, sincronização, criação e envio de templates.
 8. **Painel:** tela "Canais" (conectar WhatsApp), bolhas para todos os tipos (imagem, vídeo, documento, sticker, localização, contatos, reação, interativa) com player de áudio/voz (`AudioWaveform`), contador da janela e seletor de template no compositor.
 9. **Qualidade, recibos e digitação:** rating/tier com alerta, marcar como lida, indicador de digitação.
-10. **Aceite e docs:** os quatro critérios como testes, ADRs 0010 (envio idempotente sem chave da Meta), 0011 (webhook e deduplicação) e 0012 (recusa de bibliotecas não oficiais), runbook de conexão real, OpenAPI, CHANGELOG e backlog.
+10. **Aceite e docs:** os quatro critérios como testes, ADR 0011 (envio idempotente sem chave da Meta, passo 6) e 0012 (recusa de bibliotecas não oficiais), runbook de conexão real, OpenAPI, CHANGELOG e backlog. (ADR 0010, webhook e deduplicação, já escrito junto do passo 4/5.)
 
 ## Riscos
 

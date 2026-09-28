@@ -298,6 +298,61 @@ export async function attachmentsByMessage(
   return out;
 }
 
+export interface InboundMediaInput {
+  accountId: string;
+  inboxId: string;
+  messageId: string;
+  /** Identidade de quem mandou no canal de origem (ex.: `wa_id` do contato no WhatsApp). */
+  uploaderId: string;
+  fileName: string;
+  buffer: Buffer;
+}
+
+/**
+ * Anexo de um canal externo (mídia do WhatsApp) que o SERVIDOR já baixou e validou. Diferente do fluxo do
+ * painel/widget, aqui não há upload do cliente nem passo de conclusão separado: grava e já vincula à mensagem
+ * (mesmo se a varredura ainda não terminou — `attachmentsByMessage` só mostra quando o status virar `clean`).
+ * Tamanho ou assinatura de conteúdo que não bate com a extensão: devolve `null` (a mensagem já foi gravada
+ * sem o anexo; nunca lança, para não perder a mensagem por causa de uma mídia ruim).
+ */
+export async function attachInboundMedia(
+  ctx: Ctx,
+  input: InboundMediaInput,
+): Promise<AttachmentView | null> {
+  const { store, scanner, enqueueScan } = files(ctx);
+  const fileName = sanitizeFileName(input.fileName);
+  if (input.buffer.length < 1 || input.buffer.length > MAX_ATTACHMENT_BYTES) return null;
+  const contentType = detectContentType(input.buffer.subarray(0, HEAD_BYTES), fileName);
+  if (!contentType) return null;
+
+  const id = crypto.randomUUID();
+  const storageKey = `accounts/${input.accountId}/${id}`;
+  await store.put(storageKey, input.buffer, contentType);
+  const status = scanner ? 'scanning' : 'clean';
+  const row = await withTenant(ctx.db, input.accountId, async (tx) => {
+    const [created] = await tx
+      .insert(attachments)
+      .values({
+        id,
+        accountId: input.accountId,
+        inboxId: input.inboxId,
+        messageId: input.messageId,
+        uploaderType: 'contact',
+        uploaderId: input.uploaderId,
+        fileName,
+        contentType,
+        sizeBytes: input.buffer.length,
+        storageKey,
+        status,
+      })
+      .returning();
+    if (!created) throw new Error('falha ao registrar anexo');
+    return created;
+  });
+  if (status === 'scanning') await enqueueScan(input.accountId, id);
+  return toAttachmentView(row);
+}
+
 /** Link de download de 5 minutos. Quem chama já provou que pode ver o anexo (mensagem/conversa); aqui só gera. */
 export async function downloadUrlFor(
   ctx: Ctx,

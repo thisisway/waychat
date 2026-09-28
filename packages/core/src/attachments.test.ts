@@ -36,6 +36,10 @@ class MemStore implements ObjectStore {
     this.presigned.push(key);
     return Promise.resolve({ url: 'http://s3.test/bucket', fields: { key } });
   }
+  put(key: string, body: Buffer) {
+    this.objects.set(key, new Uint8Array(body));
+    return Promise.resolve();
+  }
   head(key: string) {
     const o = this.objects.get(key);
     return Promise.resolve(o ? { size: o.length } : null);

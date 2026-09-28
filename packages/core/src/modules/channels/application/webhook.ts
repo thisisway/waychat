@@ -94,3 +94,58 @@ export async function acceptWhatsAppEvents(
   }
   return { received: inserted, duplicates: byKey.size - inserted, ignored };
 }
+
+const KNOWN_KINDS = new Set(['message', 'status', 'template_status', 'quality']);
+
+/**
+ * Desfaz `toJson`: revive `at` (guardado como texto ISO) de volta para `Date`. O resto do formato já foi
+ * validado pelo `parseWebhook` antes de ser gravado — aqui só desfaz o que o JSON.stringify não preserva.
+ */
+function reviveEvent(raw: Record<string, unknown>): NormalizedEvent {
+  if (!KNOWN_KINDS.has(raw['kind'] as string)) {
+    throw new Error(`evento de entrada com "kind" desconhecido: ${String(raw['kind'])}`);
+  }
+  const at = raw['at'];
+  return (typeof at === 'string' ? { ...raw, at: new Date(at) } : raw) as NormalizedEvent;
+}
+
+export interface InboundEventRow {
+  id: string;
+  status: string;
+  event: NormalizedEvent;
+}
+
+/** Lê de volta um evento gravado por `acceptWhatsAppEvents` (o worker chama para processar o job). */
+export async function loadInboundEvent(
+  ctx: Ctx,
+  accountId: string,
+  eventId: string,
+): Promise<InboundEventRow | null> {
+  const row = await withTenant(ctx.db, accountId, async (tx) => {
+    const [r] = await tx.select().from(inboundEvents).where(eq(inboundEvents.id, eventId)).limit(1);
+    return r;
+  });
+  if (!row) return null;
+  return {
+    id: row.id,
+    status: row.status,
+    event: reviveEvent(row.payload as Record<string, unknown>),
+  };
+}
+
+/**
+ * Processado com sucesso. Em falha, o chamador deixa a exceção subir (o BullMQ repete com backoff) e a linha
+ * fica `received` — a próxima tentativa reprocessa do zero (o processamento em si é idempotente por `sourceId`).
+ */
+export async function markInboundEventProcessed(
+  ctx: Ctx,
+  accountId: string,
+  eventId: string,
+): Promise<void> {
+  await withTenant(ctx.db, accountId, (tx) =>
+    tx
+      .update(inboundEvents)
+      .set({ status: 'processed', processedAt: ctx.now() })
+      .where(eq(inboundEvents.id, eventId)),
+  );
+}

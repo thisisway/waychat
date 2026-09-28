@@ -11,8 +11,10 @@
   },
   "dependencies": {
     "@opentelemetry/api": "^1.9.1",
-    "@waychat/db": "workspace:*",
+    "@waychat/channels": "workspace:*",
+    "@waychat/channels-whatsapp": "workspace:*",
     "@waychat/core": "workspace:*",
+    "@waychat/db": "workspace:*",
     "@waychat/shared": "workspace:*",
     "@waychat/storage": "workspace:*",
     "bullmq": "^6.3.8",

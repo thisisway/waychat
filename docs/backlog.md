@@ -26,3 +26,6 @@ Itens fora do escopo da fase em que apareceram.
 - Gateway WebSocket: com várias instâncias da API, presença e "quem está vendo" dependem do adaptador Redis (já ligado); testar com 2 instâncias.
 - Cache da checagem de visibilidade de eventos por conta, se o custo por socket aparecer nas métricas (ADR 0007).
 - Relay do outbox: métrica de latência entre `created_at` e `published_at` (hoje só há a contagem de publicados).
+- WhatsApp: confirmação automática de opt-out ("você não receberá mais mensagens") ainda não é enviada — hoje só registra em `contact_opt_outs`; depende do passo 6 (envio).
+- WhatsApp: fila `channel-inbound` sem fila de mensagens mortas própria; um evento que esgota as 8 tentativas fica `received` para sempre, sem alerta. Avaliar quando o volume justificar.
+- WhatsApp: tipos de mídia fora da lista fixa de anexos (Office, ZIP, `audio/amr`, `video/3gpp`...) chegam mas o anexo é descartado; a mensagem fica sem o arquivo, sem avisar visivelmente o atendente.

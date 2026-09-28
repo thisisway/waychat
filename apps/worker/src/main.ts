@@ -14,6 +14,7 @@ import {
 } from './queues.js';
 import { listenOutbox } from './notify.js';
 import { startRelay } from './relay.js';
+import { startWhatsAppInboundWorker } from './whatsapp-inbound.js';
 
 const env = loadEnv();
 const log = createLogger(env.LOG_LEVEL, 'worker');
@@ -73,6 +74,17 @@ const scanWorker = startScanWorker(
   },
 );
 
+// Processamento de webhooks do WhatsApp já gravados (contato, conversa, mensagem, mídia, status). Mesmo `scanCtx`:
+// precisa do S3 (mídia recebida) e do antivírus (a mesma varredura dos anexos do painel/widget).
+const whatsappWorker = startWhatsAppInboundWorker(
+  connection,
+  scanCtx,
+  { version: env.WHATSAPP_GRAPH_VERSION, baseUrl: env.WHATSAPP_GRAPH_BASE_URL },
+  (err) => {
+    log.error({ err }, 'falha ao processar evento do WhatsApp; nova tentativa com backoff');
+  },
+);
+
 // Fases seguintes registram aqui os handlers (automações, webhooks de saída, envio por canal...).
 const worker = startEventsWorker({
   connection,
@@ -102,6 +114,7 @@ async function shutdown(signal: string): Promise<void> {
     await relay.stop();
     await worker.close();
     await scanWorker.close();
+    await whatsappWorker.close();
     await appDb.close();
     await queue.close();
     await deadLetter.close();

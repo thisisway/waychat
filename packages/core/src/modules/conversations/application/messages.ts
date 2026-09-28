@@ -85,7 +85,16 @@ export interface InboundMessageInput {
   /** Anexos já enviados e limpos (do próprio remetente). Com eles, `content` pode ser vazio. */
   attachmentIds?: string[];
   /** Restringe a inbox ao canal esperado (o canal API não pode escrever numa inbox de widget, e vice-versa). */
-  channelType?: 'api' | 'widget';
+  channelType?: 'api' | 'widget' | 'whatsapp';
+  /** Tipo da mensagem (`text` por padrão). Canais ricos (WhatsApp) mandam `image`, `location`, `reaction`... */
+  type?: string;
+  /** Mensagem que esta responde/cita, quando o canal manda uma referência (WhatsApp: `context.id`). */
+  replyToId?: string;
+  /**
+   * Conteúdo estruturado (localização, contatos, reação...) pode não ter texto nem anexo — a checagem de
+   * "vazio" existe para o widget/canal API, onde não há outra forma de a mensagem carregar algo.
+   */
+  allowEmpty?: boolean;
 }
 
 export interface InboundResult {
@@ -108,7 +117,7 @@ export async function receiveInboundMessage(
 ): Promise<InboundResult> {
   const parsed = optionalContent.safeParse(input.content);
   const ids = input.attachmentIds ?? [];
-  if (!parsed.success || (parsed.data === '' && ids.length === 0))
+  if (!parsed.success || (!input.allowEmpty && parsed.data === '' && ids.length === 0))
     throw new DomainError('invalid_input', 'conteúdo vazio ou grande demais');
   const content = parsed.data;
 
@@ -179,10 +188,12 @@ export async function receiveInboundMessage(
         direction: 'in',
         senderType: 'contact',
         senderId: contactId,
+        ...(input.type ? { type: input.type } : {}),
         content,
         contentAttributes: input.contentAttributes ?? {},
         sourceId: input.sourceId ?? null,
         clientMessageId: input.clientMessageId ?? null,
+        replyToId: input.replyToId ?? null,
         createdAt: nowMs,
       })
       .returning();

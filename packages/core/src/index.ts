@@ -177,6 +177,18 @@ export {
   agentAttachmentUrl,
   visitorAttachmentUrl,
 } from './modules/attachments/application/download.js';
+export {
+  attachInboundMedia,
+  type InboundMediaInput,
+} from './modules/attachments/application/attachments.js';
+export {
+  applyWhatsAppStatus,
+  mapWhatsAppContent,
+  processWhatsAppEvent,
+  processWhatsAppMessage,
+  type FetchedInboundMedia,
+  type MappedWhatsAppContent,
+} from './modules/channels/application/inbound.js';
 export { fileServicesFromEnv } from './files.js';
 export {
   connectWhatsApp,
@@ -184,6 +196,7 @@ export {
   DEFAULT_OPT_OUT_KEYWORDS,
   getWhatsAppConnection,
   loadWhatsAppByPublicKey,
+  loadWhatsAppTarget,
   readWhatsAppConfig,
   updateWhatsAppConnection,
   updateWhatsAppInput,
@@ -194,6 +207,9 @@ export {
 export {
   acceptWhatsAppEvents,
   externalIdOf,
+  loadInboundEvent,
+  markInboundEventProcessed,
+  type InboundEventRow,
   type WebhookIntake,
 } from './modules/channels/application/webhook.js';
 export type { ChannelServices } from './context.js';

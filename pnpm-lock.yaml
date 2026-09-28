@@ -188,6 +188,12 @@ importers:
       '@opentelemetry/api':
         specifier: ^1.9.1
         version: 1.9.1
+      '@waychat/channels':
+        specifier: workspace:*
+        version: link:../../packages/channels/core
+      '@waychat/channels-whatsapp':
+        specifier: workspace:*
+        version: link:../../packages/channels/whatsapp-cloud
       '@waychat/core':
         specifier: workspace:*
         version: link:../../packages/core

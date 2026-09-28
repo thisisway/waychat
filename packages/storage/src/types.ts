@@ -9,6 +9,8 @@ export interface ObjectStore {
     key: string,
     opts: { maxBytes: number; expiresSec?: number },
   ): Promise<{ url: string; fields: Record<string, string> }>;
+  /** Grava um objeto (mídia recebida de um canal externo, já baixada e validada). */
+  put(key: string, body: Buffer, contentType: string): Promise<void>;
   /** Tamanho do objeto, ou `null` se ele não existe. */
   head(key: string): Promise<{ size: number } | null>;
   /** Primeiros `bytes` do objeto (para conferir a assinatura do arquivo). */

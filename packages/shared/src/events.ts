@@ -38,6 +38,13 @@ export const eventPayloadSchemas = {
     inbox_id: z.uuid(),
     fields: z.array(z.string()),
   }),
+  // Mudou algo numa mensagem já existente (status de entrega, reações, anexo pronto). Só ids: o cliente busca de novo.
+  'message.updated': z.object({
+    message_id: z.uuid(),
+    conversation_id: z.uuid(),
+    inbox_id: z.uuid(),
+    fields: z.array(z.string()),
+  }),
   'message.created': z.object({
     message_id: z.uuid(),
     conversation_id: z.uuid(),

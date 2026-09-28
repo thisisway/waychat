@@ -294,3 +294,18 @@ export async function loadWhatsAppByPublicKey(
   if (!row || !config) return null;
   return { accountId: row.accountId, inboxId: row.id, enabled: row.enabled, config };
 }
+
+/** Igual, mas já sabendo a conta e a inbox (o worker recebe as duas no job da fila). */
+export async function loadWhatsAppTarget(
+  ctx: Ctx,
+  accountId: string,
+  inboxId: string,
+): Promise<WhatsAppTarget | null> {
+  const row = await withTenant(ctx.db, accountId, async (tx) => {
+    const [r] = await tx.select().from(inboxes).where(eq(inboxes.id, inboxId)).limit(1);
+    return r;
+  });
+  const config = row ? readWhatsAppConfig(ctx, row) : null;
+  if (!row || !config) return null;
+  return { accountId: row.accountId, inboxId: row.id, enabled: row.enabled, config };
+}

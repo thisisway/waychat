@@ -24,6 +24,8 @@ const env = {
   MASTER_KEY: Buffer.alloc(32).toString('base64'),
   SESSION_SECRET: 'x'.repeat(32),
   CLAMAV_PORT: 3310,
+  WHATSAPP_GRAPH_VERSION: 'v23.0',
+  WHATSAPP_GRAPH_BASE_URL: 'https://graph.facebook.com',
 } as const;
 
 const handle = createDb(env.DATABASE_URL, { max: 1 });

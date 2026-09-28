@@ -6,6 +6,7 @@ import {
   HeadObjectCommand,
   NoSuchKey,
   NotFound,
+  PutObjectCommand,
   S3Client,
 } from '@aws-sdk/client-s3';
 import { createPresignedPost } from '@aws-sdk/s3-presigned-post';
@@ -50,6 +51,11 @@ export function createS3Store(o: S3Options): ObjectStore {
         Conditions: [['content-length-range', 1, maxBytes]],
       });
       return { url, fields };
+    },
+    async put(key, body, contentType) {
+      await internal.send(
+        new PutObjectCommand({ Bucket, Key: key, Body: body, ContentType: contentType }),
+      );
     },
     async head(key) {
       try {
