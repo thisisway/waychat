@@ -159,7 +159,7 @@ export async function processWhatsAppMessage(
     mapped.type === 'text' && matchesOptOut(mapped.content, target.config.optOutKeywords);
 
   // Resposta citada: a Meta só deixa citar uma mensagem do mesmo fio, então basta achar pelo id na inbox
-  // (não precisa confirmar o contato — ver ADR 0010 para o raciocínio completo).
+  // (não precisa confirmar o contato de novo).
   let replyToId: string | undefined;
   const quotedProviderId = event.replyToProviderId;
   if (quotedProviderId) {
